@@ -4,46 +4,36 @@
   padding: 0;
 }
 
-html {
-  font-size: 16px;
-}
-
-body {
-  font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, sans-serif;
-  background: #f8fafc;
-  color: #1f2937;
-  line-height: 1.5;
+html, body {
+  height: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: #f8fafc;
+  color: #111827;
 }
 
 button {
   font-family: inherit;
 }
 
-input, select, textarea {
+input, textarea, select {
   font-family: inherit;
 }
 
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+a {
+  color: inherit;
+  text-decoration: none;
 }
 
-::-webkit-scrollbar-track {
-  background: #f1f5f9;
-}
-
-::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
-  border-radius: 4px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8;
+:focus-visible {
+  outline: 2px solid #2d6a9f;
+  outline-offset: 2px;
 }
 
 @media (max-width: 640px) {
-  main {
-    padding: 16px !important;
+  header {
+    flex-wrap: wrap;
+    gap: 0.5rem;
   }
 }
