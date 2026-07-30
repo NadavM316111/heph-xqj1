@@ -1,131 +1,130 @@
 import { NextRequest, NextResponse } from "next/server";
 import { q, hasDb } from "@/lib/db";
-
-interface DeadlineEntry {
-  collegeId: string;
-  collegeName: string;
-  type: string;
-  date: string;
-  daysUntil: number;
-}
+import { COLLEGES } from "@/lib/colleges";
 
 interface ReminderPayload {
   email: string;
-  deadlines: DeadlineEntry[];
-  gradYear: string;
+  phone?: string;
+  reminders: number[];
+  schools: { collegeId: string; deadlineTypes: string[] }[];
 }
 
 export async function POST(req: NextRequest) {
   try {
     const body: ReminderPayload = await req.json();
-    const { email, deadlines, gradYear } = body;
+    const { email, phone, reminders, schools } = body;
 
-    if (!email || !deadlines || !Array.isArray(deadlines)) {
-      return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
+    if (!email || !schools || schools.length === 0) {
+      return NextResponse.json({ ok: false, error: "Missing required fields" }, { status: 400 });
     }
 
     if (!hasDb()) {
-      // No DB available — still return success so the UI works
-      return NextResponse.json({
-        ok: true,
-        message: "Reminders noted (no DB configured)",
-        scheduled: 0,
-      });
+      // No DB — just acknowledge
+      return NextResponse.json({ ok: true, message: "Reminders noted (no DB configured)" });
     }
 
-    const prefix = process.env.APP_TABLE_PREFIX ?? "app";
+    const prefix = process.env.APP_TABLE_PREFIX ?? "edutracker";
+    const settingsTable = `${prefix}_reminder_settings`;
+    const deadlinesTable = `${prefix}_user_deadlines`;
 
-    // Ensure reminder tables exist
+    // Create tables if they don't exist
     await q(
-      `CREATE TABLE IF NOT EXISTS "${prefix}_reminder_schedules" (
+      `CREATE TABLE IF NOT EXISTS ${settingsTable} (
+        id SERIAL PRIMARY KEY,
+        email TEXT NOT NULL,
+        phone TEXT,
+        reminder_days INTEGER[],
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )`,
+      []
+    );
+
+    await q(
+      `CREATE TABLE IF NOT EXISTS ${deadlinesTable} (
         id SERIAL PRIMARY KEY,
         email TEXT NOT NULL,
         college_id TEXT NOT NULL,
         college_name TEXT NOT NULL,
         deadline_type TEXT NOT NULL,
         deadline_date DATE NOT NULL,
-        grad_year TEXT,
-        remind_30 BOOLEAN DEFAULT FALSE,
-        remind_14 BOOLEAN DEFAULT FALSE,
-        remind_7 BOOLEAN DEFAULT FALSE,
-        remind_1 BOOLEAN DEFAULT FALSE,
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW(),
-        UNIQUE(email, college_id, deadline_type)
+        created_at TIMESTAMPTZ DEFAULT NOW()
       )`,
       []
     );
 
-    // Upsert each deadline reminder schedule
-    let scheduled = 0;
-    for (const dl of deadlines) {
-      if (!dl.date || !dl.collegeId || !dl.type) continue;
-      try {
-        await q(
-          `INSERT INTO "${prefix}_reminder_schedules"
-            (email, college_id, college_name, deadline_type, deadline_date, grad_year,
-             remind_30, remind_14, remind_7, remind_1, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, false, false, false, false, NOW())
-           ON CONFLICT (email, college_id, deadline_type)
-           DO UPDATE SET
-             college_name = EXCLUDED.college_name,
-             deadline_date = EXCLUDED.deadline_date,
-             grad_year = EXCLUDED.grad_year,
-             remind_30 = false,
-             remind_14 = false,
-             remind_7 = false,
-             remind_1 = false,
-             updated_at = NOW()`,
-          [email, dl.collegeId, dl.collegeName, dl.type, dl.date, gradYear]
-        );
-        scheduled++;
-      } catch {
-        // Continue if individual insert fails
-      }
-    }
+    // Upsert reminder settings
+    const existing = await q(
+      `SELECT id FROM ${settingsTable} WHERE email = $1`,
+      [email]
+    );
 
-    // Remove reminders for colleges no longer in the list
-    const collegeIds = deadlines.map((d) => d.collegeId);
-    if (collegeIds.length > 0) {
-      // Build a parameterized NOT IN query
-      const placeholders = collegeIds.map((_, i) => `$${i + 2}`).join(", ");
+    if (existing.rows.length > 0) {
       await q(
-        `DELETE FROM "${prefix}_reminder_schedules"
-         WHERE email = $1 AND college_id NOT IN (${placeholders})`,
-        [email, ...collegeIds]
+        `UPDATE ${settingsTable} SET phone = $1, reminder_days = $2, updated_at = NOW() WHERE email = $3`,
+        [phone ?? null, reminders, email]
+      );
+    } else {
+      await q(
+        `INSERT INTO ${settingsTable} (email, phone, reminder_days) VALUES ($1, $2, $3)`,
+        [email, phone ?? null, reminders]
       );
     }
 
-    return NextResponse.json({ ok: true, scheduled });
+    // Replace user deadlines
+    await q(`DELETE FROM ${deadlinesTable} WHERE email = $1`, [email]);
+
+    for (const sel of schools) {
+      const college = COLLEGES.find((c) => c.id === sel.collegeId);
+      if (!college) continue;
+      for (const dt of sel.deadlineTypes) {
+        const deadlineTypes = ["ED1", "ED2", "EA", "RD"] as const;
+        type DeadlineType = typeof deadlineTypes[number];
+        const dateStr = college.deadlines[dt as DeadlineType];
+        if (!dateStr) continue;
+        await q(
+          `INSERT INTO ${deadlinesTable} (email, college_id, college_name, deadline_type, deadline_date)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [email, college.id, college.name, dt, dateStr]
+        );
+      }
+    }
+
+    return NextResponse.json({ ok: true, message: "Reminders saved successfully" });
   } catch (err) {
     console.error("Reminders API error:", err);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    return NextResponse.json({ ok: false, error: "Server error" }, { status: 500 });
   }
 }
 
 export async function GET(req: NextRequest) {
+  const { searchParams } = new URL(req.url);
+  const email = searchParams.get("email");
+
+  if (!email) {
+    return NextResponse.json({ error: "email required" }, { status: 400 });
+  }
+
+  if (!hasDb()) {
+    return NextResponse.json({ settings: null, deadlines: [] });
+  }
+
+  const prefix = process.env.APP_TABLE_PREFIX ?? "edutracker";
+  const settingsTable = `${prefix}_reminder_settings`;
+  const deadlinesTable = `${prefix}_user_deadlines`;
+
   try {
-    const { searchParams } = new URL(req.url);
-    const email = searchParams.get("email");
-
-    if (!email) {
-      return NextResponse.json({ error: "Email required" }, { status: 400 });
-    }
-
-    if (!hasDb()) {
-      return NextResponse.json({ ok: true, reminders: [] });
-    }
-
-    const prefix = process.env.APP_TABLE_PREFIX ?? "app";
-
-    const rows = await q(
-      `SELECT * FROM "${prefix}_reminder_schedules" WHERE email = $1 ORDER BY deadline_date ASC`,
+    const settings = await q(`SELECT * FROM ${settingsTable} WHERE email = $1`, [email]);
+    const deadlines = await q(
+      `SELECT * FROM ${deadlinesTable} WHERE email = $1 ORDER BY deadline_date ASC`,
       [email]
     );
 
-    return NextResponse.json({ ok: true, reminders: rows });
-  } catch (err) {
-    console.error("Reminders GET error:", err);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    return NextResponse.json({
+      settings: settings.rows[0] ?? null,
+      deadlines: deadlines.rows,
+    });
+  } catch {
+    return NextResponse.json({ settings: null, deadlines: [] });
   }
 }

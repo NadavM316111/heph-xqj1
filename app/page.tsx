@@ -1,76 +1,92 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { COLLEGES } from "../lib/colleges";
+import { useEffect, useState, useCallback } from "react";
+import { COLLEGES, College } from "@/lib/colleges";
 
-type AppType = "Early Decision" | "Early Action" | "Regular Decision";
-type AuthMode = "login" | "signup";
+type ReminderInterval = 30 | 14 | 7 | 1;
+type DeadlineType = "ED1" | "ED2" | "EA" | "RD";
 
-interface College {
-  name: string;
-  deadlines: Record<AppType, string>;
-  location: string;
-  type: string;
+interface SelectedSchool {
+  collegeId: string;
+  deadlineTypes: DeadlineType[];
 }
 
-interface TrackedCollege {
-  id: number;
-  college_name: string;
-  app_type: AppType;
-  deadline: string;
-  notes: string;
-  created_at: string;
+interface UserPrefs {
+  email: string;
+  phone: string;
+  reminders: ReminderInterval[];
+  schools: SelectedSchool[];
 }
 
-const APP_TYPES: AppType[] = ["Early Decision", "Early Action", "Regular Decision"];
-
-function getDaysUntil(dateStr: string): number {
-  const now = new Date();
-  now.setHours(0, 0, 0, 0);
-  const deadline = new Date(dateStr);
-  deadline.setHours(0, 0, 0, 0);
-  return Math.ceil((deadline.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+interface FlatDeadline {
+  collegeId: string;
+  collegeName: string;
+  type: DeadlineType;
+  date: string;
+  daysUntil: number;
 }
 
-function getUrgencyColor(dateStr: string): { bg: string; text: string; border: string; label: string } {
-  const days = getDaysUntil(dateStr);
-  if (days < 0) return { bg: "#f3f4f6", text: "#6b7280", border: "#d1d5db", label: "Past" };
-  if (days < 7) return { bg: "#fef2f2", text: "#dc2626", border: "#fca5a5", label: `${days}d left` };
-  if (days < 30) return { bg: "#fefce8", text: "#d97706", border: "#fcd34d", label: `${days}d left` };
-  return { bg: "#f0fdf4", text: "#16a34a", border: "#86efac", label: `${days}d left` };
+type Step = "auth" | "schools" | "reminders" | "dashboard";
+
+const REMINDER_OPTIONS: { value: ReminderInterval; label: string }[] = [
+  { value: 30, label: "30 days before" },
+  { value: 14, label: "14 days before" },
+  { value: 7, label: "7 days before" },
+  { value: 1, label: "1 day before" },
+];
+
+function daysUntil(dateStr: string): number {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const target = new Date(dateStr + "T00:00:00");
+  const diff = target.getTime() - today.getTime();
+  return Math.ceil(diff / (1000 * 60 * 60 * 24));
 }
 
 function formatDate(dateStr: string): string {
-  const d = new Date(dateStr);
-  return d.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+  const d = new Date(dateStr + "T00:00:00");
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+function urgencyColor(days: number): string {
+  if (days < 0) return "#9ca3af";
+  if (days <= 7) return "#ef4444";
+  if (days <= 14) return "#f97316";
+  if (days <= 30) return "#eab308";
+  return "#22c55e";
+}
+
+function urgencyBg(days: number): string {
+  if (days < 0) return "#f3f4f6";
+  if (days <= 7) return "#fef2f2";
+  if (days <= 14) return "#fff7ed";
+  if (days <= 30) return "#fefce8";
+  return "#f0fdf4";
 }
 
 export default function Home() {
-  const [user, setUser] = useState<string | null>(null);
-  const [authMode, setAuthMode] = useState<AuthMode>("login");
-  const [authEmail, setAuthEmail] = useState("");
-  const [authPassword, setAuthPassword] = useState("");
+  const [step, setStep] = useState<Step>("auth");
+  const [authMode, setAuthMode] = useState<"login" | "signup">("signup");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [phone, setPhone] = useState("");
   const [authError, setAuthError] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
+  const [userEmail, setUserEmail] = useState("");
 
-  const [view, setView] = useState<"dashboard" | "add">("dashboard");
-  const [trackedColleges, setTrackedColleges] = useState<TrackedCollege[]>([]);
-  const [loadingColleges, setLoadingColleges] = useState(false);
-
-  // Add college form
   const [searchQuery, setSearchQuery] = useState("");
-  const [searchResults, setSearchResults] = useState<College[]>([]);
-  const [selectedCollege, setSelectedCollege] = useState<College | null>(null);
-  const [selectedAppType, setSelectedAppType] = useState<AppType>("Regular Decision");
-  const [customDeadline, setCustomDeadline] = useState("");
-  const [notes, setNotes] = useState("");
-  const [manualName, setManualName] = useState("");
-  const [addMode, setAddMode] = useState<"search" | "manual">("search");
-  const [addLoading, setAddLoading] = useState(false);
-  const [addError, setAddError] = useState("");
-  const [addSuccess, setAddSuccess] = useState("");
+  const [selectedSchools, setSelectedSchools] = useState<SelectedSchool[]>([]);
+  const [filterState, setFilterState] = useState("All");
+  const [filterType, setFilterType] = useState<"All" | "Public" | "Private">("All");
 
-  const [deleteLoading, setDeleteLoading] = useState<number | null>(null);
+  const [reminders, setReminders] = useState<ReminderInterval[]>([30, 14, 7, 1]);
+  const [reminderEmail, setReminderEmail] = useState("");
+  const [reminderPhone, setReminderPhone] = useState("");
+
+  const [deadlines, setDeadlines] = useState<FlatDeadline[]>([]);
+  const [filterDeadlineType, setFilterDeadlineType] = useState<"All" | DeadlineType>("All");
+  const [filterUrgency, setFilterUrgency] = useState<"All" | "urgent" | "soon" | "upcoming">("All");
+  const [saveStatus, setSaveStatus] = useState("");
 
   useEffect(() => {
     fetch("/api/track", {
@@ -81,49 +97,76 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    const saved = localStorage.getItem("edutracker_user");
-    if (saved) setUser(saved);
-  }, []);
-
-  const fetchColleges = useCallback(async (email: string) => {
-    setLoadingColleges(true);
-    try {
-      const res = await fetch(`/api/colleges?email=${encodeURIComponent(email)}`);
-      const data = await res.json();
-      if (data.colleges) {
-        const sorted = [...data.colleges].sort(
-          (a: TrackedCollege, b: TrackedCollege) =>
-            new Date(a.deadline).getTime() - new Date(b.deadline).getTime()
-        );
-        setTrackedColleges(sorted);
-      }
-    } catch {
-      // ignore
-    } finally {
-      setLoadingColleges(false);
+    const saved = localStorage.getItem("edutracker_prefs");
+    if (saved) {
+      try {
+        const prefs: UserPrefs = JSON.parse(saved);
+        setUserEmail(prefs.email || "");
+        setReminderEmail(prefs.email || "");
+        setReminderPhone(prefs.phone || "");
+        setReminders(prefs.reminders || [30, 14, 7, 1]);
+        setSelectedSchools(prefs.schools || []);
+        setStep("dashboard");
+      } catch {}
     }
   }, []);
 
-  useEffect(() => {
-    if (user) fetchColleges(user);
-  }, [user, fetchColleges]);
+  const buildDeadlines = useCallback((schools: SelectedSchool[]): FlatDeadline[] => {
+    const result: FlatDeadline[] = [];
+    for (const sel of schools) {
+      const college = COLLEGES.find((c) => c.id === sel.collegeId);
+      if (!college) continue;
+      for (const dt of sel.deadlineTypes) {
+        const dateStr = college.deadlines[dt];
+        if (!dateStr) continue;
+        result.push({
+          collegeId: college.id,
+          collegeName: college.name,
+          type: dt,
+          date: dateStr,
+          daysUntil: daysUntil(dateStr),
+        });
+      }
+    }
+    result.sort((a, b) => a.daysUntil - b.daysUntil);
+    return result;
+  }, []);
 
-  async function handleAuth(e: React.FormEvent) {
-    e.preventDefault();
+  useEffect(() => {
+    if (step === "dashboard") {
+      setDeadlines(buildDeadlines(selectedSchools));
+    }
+  }, [step, selectedSchools, buildDeadlines]);
+
+  async function handleAuth() {
     setAuthError("");
     setAuthLoading(true);
     try {
       const res = await fetch("/api/auth", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: authMode, email: authEmail, password: authPassword }),
+        body: JSON.stringify({ mode: authMode, email, password }),
       });
       const data = await res.json();
-      if (data.ok) {
-        setUser(data.email);
-        localStorage.setItem("edutracker_user", data.email);
+      if (data.error) {
+        setAuthError(data.error);
       } else {
-        setAuthError(data.error || "Authentication failed");
+        setUserEmail(data.email);
+        setReminderEmail(data.email);
+        const saved = localStorage.getItem("edutracker_prefs");
+        if (saved) {
+          try {
+            const prefs: UserPrefs = JSON.parse(saved);
+            if (prefs.email === data.email) {
+              setSelectedSchools(prefs.schools || []);
+              setReminders(prefs.reminders || [30, 14, 7, 1]);
+              setReminderPhone(prefs.phone || "");
+              setStep("dashboard");
+              return;
+            }
+          } catch {}
+        }
+        setStep("schools");
       }
     } catch {
       setAuthError("Network error. Please try again.");
@@ -132,486 +175,644 @@ export default function Home() {
     }
   }
 
-  function handleLogout() {
-    setUser(null);
-    localStorage.removeItem("edutracker_user");
-    setTrackedColleges([]);
-    setView("dashboard");
+  function toggleSchool(college: College, dt: DeadlineType) {
+    setSelectedSchools((prev) => {
+      const existing = prev.find((s) => s.collegeId === college.id);
+      if (existing) {
+        if (existing.deadlineTypes.includes(dt)) {
+          const newTypes = existing.deadlineTypes.filter((t) => t !== dt);
+          if (newTypes.length === 0) return prev.filter((s) => s.collegeId !== college.id);
+          return prev.map((s) => s.collegeId === college.id ? { ...s, deadlineTypes: newTypes } : s);
+        } else {
+          return prev.map((s) => s.collegeId === college.id ? { ...s, deadlineTypes: [...s.deadlineTypes, dt] } : s);
+        }
+      } else {
+        return [...prev, { collegeId: college.id, deadlineTypes: [dt] }];
+      }
+    });
   }
 
-  function handleSearch(q: string) {
-    setSearchQuery(q);
-    setSelectedCollege(null);
-    if (q.trim().length < 2) {
-      setSearchResults([]);
-      return;
-    }
-    const lower = q.toLowerCase();
-    const results = COLLEGES.filter(
-      (c) =>
-        c.name.toLowerCase().includes(lower) ||
-        c.location.toLowerCase().includes(lower)
-    ).slice(0, 8);
-    setSearchResults(results);
+  function isSelected(collegeId: string, dt: DeadlineType): boolean {
+    const s = selectedSchools.find((x) => x.collegeId === collegeId);
+    return !!s && s.deadlineTypes.includes(dt);
   }
 
-  function selectCollege(college: College) {
-    setSelectedCollege(college);
-    setSearchQuery(college.name);
-    setSearchResults([]);
-    const deadline = college.deadlines[selectedAppType];
-    setCustomDeadline(deadline || "");
+  function toggleReminder(val: ReminderInterval) {
+    setReminders((prev) =>
+      prev.includes(val) ? prev.filter((r) => r !== val) : [...prev, val]
+    );
   }
 
-  function handleAppTypeChange(type: AppType) {
-    setSelectedAppType(type);
-    if (selectedCollege) {
-      const deadline = selectedCollege.deadlines[type];
-      setCustomDeadline(deadline || "");
-    }
-  }
+  async function saveAndFinish() {
+    setSaveStatus("Saving...");
+    const prefs: UserPrefs = {
+      email: reminderEmail,
+      phone: reminderPhone,
+      reminders,
+      schools: selectedSchools,
+    };
+    localStorage.setItem("edutracker_prefs", JSON.stringify(prefs));
 
-  async function handleAddCollege(e: React.FormEvent) {
-    e.preventDefault();
-    setAddError("");
-    setAddSuccess("");
-
-    const name = addMode === "search" ? (selectedCollege?.name || "") : manualName.trim();
-    if (!name) {
-      setAddError("Please select or enter a college name.");
-      return;
-    }
-    if (!customDeadline) {
-      setAddError("Please enter a deadline date.");
-      return;
-    }
-
-    setAddLoading(true);
     try {
-      const res = await fetch("/api/colleges", {
+      await fetch("/api/reminders", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: user,
-          college_name: name,
-          app_type: selectedAppType,
-          deadline: customDeadline,
-          notes: notes.trim(),
-        }),
+        body: JSON.stringify(prefs),
       });
-      const data = await res.json();
-      if (data.ok) {
-        setAddSuccess(`${name} added successfully!`);
-        setSelectedCollege(null);
-        setSearchQuery("");
-        setManualName("");
-        setNotes("");
-        setCustomDeadline("");
-        setSelectedAppType("Regular Decision");
-        if (user) fetchColleges(user);
-        setTimeout(() => {
-          setView("dashboard");
-          setAddSuccess("");
-        }, 1200);
-      } else {
-        setAddError(data.error || "Failed to add college.");
-      }
-    } catch {
-      setAddError("Network error. Please try again.");
-    } finally {
-      setAddLoading(false);
-    }
+    } catch {}
+
+    setSaveStatus("Saved!");
+    setTimeout(() => setSaveStatus(""), 2000);
+    setStep("dashboard");
   }
 
-  async function handleDelete(id: number) {
-    setDeleteLoading(id);
-    try {
-      const res = await fetch("/api/colleges", {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, email: user }),
-      });
-      const data = await res.json();
-      if (data.ok) {
-        setTrackedColleges((prev) => prev.filter((c) => c.id !== id));
-      }
-    } catch {
-      // ignore
-    } finally {
-      setDeleteLoading(null);
-    }
-  }
+  const allStates = ["All", ...Array.from(new Set(COLLEGES.map((c) => c.state))).sort()];
 
-  // Auth screen
-  if (!user) {
+  const filteredColleges = COLLEGES.filter((c) => {
+    const q = searchQuery.toLowerCase();
+    const matchSearch = !q || c.name.toLowerCase().includes(q) || c.state.toLowerCase().includes(q);
+    const matchState = filterState === "All" || c.state === filterState;
+    const matchType = filterType === "All" || c.type === filterType;
+    return matchSearch && matchState && matchType;
+  });
+
+  const filteredDeadlines = deadlines.filter((d) => {
+    const matchType = filterDeadlineType === "All" || d.type === filterDeadlineType;
+    const matchUrgency =
+      filterUrgency === "All" ||
+      (filterUrgency === "urgent" && d.daysUntil >= 0 && d.daysUntil <= 7) ||
+      (filterUrgency === "soon" && d.daysUntil > 7 && d.daysUntil <= 30) ||
+      (filterUrgency === "upcoming" && d.daysUntil > 30);
+    return matchType && matchUrgency;
+  });
+
+  // AUTH STEP
+  if (step === "auth") {
     return (
-      <div style={{ minHeight: "100vh", background: "linear-gradient(135deg, #1e3a5f 0%, #2d6a9f 100%)", display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem" }}>
-        <div style={{ background: "#fff", borderRadius: "16px", padding: "2.5rem", width: "100%", maxWidth: "420px", boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
-          <div style={{ textAlign: "center", marginBottom: "2rem" }}>
-            <div style={{ fontSize: "2.5rem", marginBottom: "0.5rem" }}>🎓</div>
-            <h1 style={{ fontSize: "1.75rem", fontWeight: "800", color: "#1e3a5f", margin: 0 }}>Edutracker</h1>
-            <p style={{ color: "#6b7280", marginTop: "0.5rem", fontSize: "0.95rem" }}>Track your college application deadlines</p>
-          </div>
+      <div style={styles.authContainer}>
+        <div style={styles.authCard}>
+          <div style={styles.logo}>🎓</div>
+          <h1 style={styles.appTitle}>EduTracker</h1>
+          <p style={styles.appSubtitle}>Never miss a college application deadline</p>
 
-          <div style={{ display: "flex", background: "#f3f4f6", borderRadius: "10px", padding: "4px", marginBottom: "1.5rem" }}>
-            {(["login", "signup"] as AuthMode[]).map((mode) => (
-              <button
-                key={mode}
-                onClick={() => { setAuthMode(mode); setAuthError(""); }}
-                style={{
-                  flex: 1, padding: "0.6rem", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "0.9rem", fontWeight: "600", transition: "all 0.2s",
-                  background: authMode === mode ? "#fff" : "transparent",
-                  color: authMode === mode ? "#1e3a5f" : "#6b7280",
-                  boxShadow: authMode === mode ? "0 1px 4px rgba(0,0,0,0.1)" : "none",
-                }}
-              >
-                {mode === "login" ? "Sign In" : "Sign Up"}
-              </button>
-            ))}
-          </div>
-
-          <form onSubmit={handleAuth}>
-            <div style={{ marginBottom: "1rem" }}>
-              <label style={{ display: "block", fontSize: "0.85rem", fontWeight: "600", color: "#374151", marginBottom: "0.4rem" }}>Email</label>
-              <input
-                type="email" required value={authEmail} onChange={(e) => setAuthEmail(e.target.value)}
-                placeholder="you@example.com"
-                style={{ width: "100%", padding: "0.75rem 1rem", border: "1.5px solid #d1d5db", borderRadius: "8px", fontSize: "0.95rem", outline: "none", boxSizing: "border-box", transition: "border-color 0.2s" }}
-                onFocus={(e) => e.target.style.borderColor = "#2d6a9f"}
-                onBlur={(e) => e.target.style.borderColor = "#d1d5db"}
-              />
-            </div>
-            <div style={{ marginBottom: "1.25rem" }}>
-              <label style={{ display: "block", fontSize: "0.85rem", fontWeight: "600", color: "#374151", marginBottom: "0.4rem" }}>Password</label>
-              <input
-                type="password" required value={authPassword} onChange={(e) => setAuthPassword(e.target.value)}
-                placeholder="••••••••"
-                style={{ width: "100%", padding: "0.75rem 1rem", border: "1.5px solid #d1d5db", borderRadius: "8px", fontSize: "0.95rem", outline: "none", boxSizing: "border-box", transition: "border-color 0.2s" }}
-                onFocus={(e) => e.target.style.borderColor = "#2d6a9f"}
-                onBlur={(e) => e.target.style.borderColor = "#d1d5db"}
-              />
-            </div>
-            {authError && (
-              <div style={{ background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: "8px", padding: "0.75rem", color: "#dc2626", fontSize: "0.875rem", marginBottom: "1rem" }}>
-                {authError}
-              </div>
-            )}
+          <div style={styles.tabRow}>
             <button
-              type="submit" disabled={authLoading}
-              style={{ width: "100%", padding: "0.85rem", background: authLoading ? "#93c5fd" : "#1e3a5f", color: "#fff", border: "none", borderRadius: "8px", fontSize: "1rem", fontWeight: "700", cursor: authLoading ? "not-allowed" : "pointer", transition: "background 0.2s" }}
+              style={{ ...styles.tab, ...(authMode === "signup" ? styles.tabActive : {}) }}
+              onClick={() => setAuthMode("signup")}
             >
-              {authLoading ? "Please wait..." : authMode === "login" ? "Sign In" : "Create Account"}
+              Sign Up
             </button>
-          </form>
+            <button
+              style={{ ...styles.tab, ...(authMode === "login" ? styles.tabActive : {}) }}
+              onClick={() => setAuthMode("login")}
+            >
+              Log In
+            </button>
+          </div>
+
+          <input
+            style={styles.input}
+            type="email"
+            placeholder="Email address"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleAuth()}
+          />
+          <input
+            style={styles.input}
+            type="password"
+            placeholder="Password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleAuth()}
+          />
+
+          {authError && <p style={styles.errorMsg}>{authError}</p>}
+
+          <button style={styles.primaryBtn} onClick={handleAuth} disabled={authLoading}>
+            {authLoading ? "..." : authMode === "signup" ? "Create Account" : "Log In"}
+          </button>
         </div>
       </div>
     );
   }
 
-  return (
-    <div style={{ minHeight: "100vh", background: "#f8fafc" }}>
-      {/* Header */}
-      <header style={{ background: "linear-gradient(135deg, #1e3a5f 0%, #2d6a9f 100%)", padding: "1rem 1.5rem", display: "flex", alignItems: "center", justifyContent: "space-between", boxShadow: "0 2px 12px rgba(0,0,0,0.15)" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
-          <span style={{ fontSize: "1.75rem" }}>🎓</span>
-          <div>
-            <h1 style={{ color: "#fff", margin: 0, fontSize: "1.35rem", fontWeight: "800", lineHeight: 1 }}>Edutracker</h1>
-            <p style={{ color: "#93c5fd", margin: 0, fontSize: "0.75rem" }}>College Application Tracker</p>
+  // SCHOOL SELECTION STEP
+  if (step === "schools") {
+    return (
+      <div style={styles.pageContainer}>
+        <div style={styles.onboardingHeader}>
+          <div style={styles.stepIndicator}>
+            <span style={styles.stepDot}>1</span>
+            <span style={styles.stepLine} />
+            <span style={styles.stepDotInactive}>2</span>
           </div>
+          <h2 style={styles.stepTitle}>Select Your Target Schools</h2>
+          <p style={styles.stepSubtitle}>
+            Choose each school and click the deadline types you&apos;re applying to.
+            {selectedSchools.length > 0 && (
+              <strong> {selectedSchools.reduce((a, s) => a + s.deadlineTypes.length, 0)} deadlines selected</strong>
+            )}
+          </p>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
-          <span style={{ color: "#bfdbfe", fontSize: "0.85rem", display: "none" }} className="user-email">{user}</span>
-          <span style={{ color: "#bfdbfe", fontSize: "0.85rem" }}>{user}</span>
+
+        <div style={styles.filterBar}>
+          <input
+            style={{ ...styles.input, ...styles.searchInput }}
+            placeholder="Search colleges..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+          <select style={styles.select} value={filterState} onChange={(e) => setFilterState(e.target.value)}>
+            {allStates.map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
+          <select style={styles.select} value={filterType} onChange={(e) => setFilterType(e.target.value as "All" | "Public" | "Private")}>
+            <option value="All">All Types</option>
+            <option value="Public">Public</option>
+            <option value="Private">Private</option>
+          </select>
+        </div>
+
+        <div style={styles.collegeGrid}>
+          {filteredColleges.map((college) => {
+            const hasAny = selectedSchools.some((s) => s.collegeId === college.id);
+            return (
+              <div key={college.id} style={{ ...styles.collegeCard, ...(hasAny ? styles.collegeCardSelected : {}) }}>
+                <div style={styles.collegeCardHeader}>
+                  <div>
+                    <p style={styles.collegeName}>{college.name}</p>
+                    <p style={styles.collegeMeta}>{college.state} · {college.type} · #{college.ranking}</p>
+                  </div>
+                  <span style={styles.acceptRate}>{college.acceptanceRate}%</span>
+                </div>
+                <div style={styles.deadlineRow}>
+                  {(["ED1", "ED2", "EA", "RD"] as DeadlineType[]).map((dt) => {
+                    const date = college.deadlines[dt];
+                    if (!date) return null;
+                    const selected = isSelected(college.id, dt);
+                    return (
+                      <button
+                        key={dt}
+                        style={{ ...styles.deadlineChip, ...(selected ? styles.deadlineChipSelected : {}) }}
+                        onClick={() => toggleSchool(college, dt)}
+                        title={formatDate(date)}
+                      >
+                        <span>{dt}</span>
+                        <span style={styles.chipDate}>{formatDate(date)}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div style={styles.stickyBottom}>
+          <p style={styles.selectionCount}>
+            {selectedSchools.length} schools · {selectedSchools.reduce((a, s) => a + s.deadlineTypes.length, 0)} deadlines
+          </p>
           <button
-            onClick={handleLogout}
-            style={{ background: "rgba(255,255,255,0.15)", color: "#fff", border: "1px solid rgba(255,255,255,0.3)", borderRadius: "8px", padding: "0.4rem 0.9rem", cursor: "pointer", fontSize: "0.85rem", fontWeight: "600" }}
+            style={{ ...styles.primaryBtn, ...styles.btnInline }}
+            onClick={() => setStep("reminders")}
+            disabled={selectedSchools.length === 0}
           >
-            Sign Out
+            Next: Set Up Reminders →
           </button>
         </div>
-      </header>
+      </div>
+    );
+  }
 
-      {/* Nav */}
-      <nav style={{ background: "#fff", borderBottom: "1px solid #e5e7eb", padding: "0 1.5rem" }}>
-        <div style={{ display: "flex", gap: "0", maxWidth: "900px", margin: "0 auto" }}>
-          {[{ key: "dashboard", label: "📋 My Dashboard" }, { key: "add", label: "➕ Add College" }].map((tab) => (
-            <button
-              key={tab.key}
-              onClick={() => setView(tab.key as "dashboard" | "add")}
-              style={{
-                padding: "1rem 1.5rem", border: "none", borderBottom: view === tab.key ? "3px solid #1e3a5f" : "3px solid transparent",
-                background: "transparent", cursor: "pointer", fontSize: "0.9rem", fontWeight: "600",
-                color: view === tab.key ? "#1e3a5f" : "#6b7280", transition: "all 0.2s",
-              }}
-            >
-              {tab.label}
-            </button>
-          ))}
+  // REMINDERS STEP
+  if (step === "reminders") {
+    return (
+      <div style={styles.pageContainer}>
+        <div style={styles.onboardingHeader}>
+          <div style={styles.stepIndicator}>
+            <span style={styles.stepDotDone}>✓</span>
+            <span style={styles.stepLine} />
+            <span style={styles.stepDot}>2</span>
+          </div>
+          <h2 style={styles.stepTitle}>Set Up Reminders</h2>
+          <p style={styles.stepSubtitle}>We&apos;ll remind you before each deadline.</p>
         </div>
-      </nav>
 
-      <main style={{ maxWidth: "900px", margin: "0 auto", padding: "2rem 1.5rem" }}>
+        <div style={styles.reminderCard}>
+          <h3 style={styles.sectionLabel}>📧 Email Reminders</h3>
+          <input
+            style={styles.input}
+            type="email"
+            placeholder="Your email address"
+            value={reminderEmail}
+            onChange={(e) => setReminderEmail(e.target.value)}
+          />
 
-        {/* DASHBOARD VIEW */}
-        {view === "dashboard" && (
-          <div>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1.5rem", flexWrap: "wrap", gap: "1rem" }}>
-              <div>
-                <h2 style={{ margin: 0, fontSize: "1.5rem", fontWeight: "800", color: "#1e3a5f" }}>My Applications</h2>
-                <p style={{ margin: "0.25rem 0 0", color: "#6b7280", fontSize: "0.9rem" }}>
-                  {trackedColleges.length} {trackedColleges.length === 1 ? "school" : "schools"} tracked
-                </p>
-              </div>
-              <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
-                <span style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", color: "#6b7280" }}>
-                  <span style={{ width: "10px", height: "10px", borderRadius: "50%", background: "#dc2626", display: "inline-block" }}></span> &lt;7 days
-                </span>
-                <span style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", color: "#6b7280" }}>
-                  <span style={{ width: "10px", height: "10px", borderRadius: "50%", background: "#d97706", display: "inline-block" }}></span> &lt;30 days
-                </span>
-                <span style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", color: "#6b7280" }}>
-                  <span style={{ width: "10px", height: "10px", borderRadius: "50%", background: "#16a34a", display: "inline-block" }}></span> 30+ days
-                </span>
-              </div>
-            </div>
-
-            {loadingColleges ? (
-              <div style={{ textAlign: "center", padding: "4rem", color: "#6b7280" }}>
-                <div style={{ fontSize: "2rem", marginBottom: "1rem" }}>⏳</div>
-                <p>Loading your colleges...</p>
-              </div>
-            ) : trackedColleges.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "4rem 2rem", background: "#fff", borderRadius: "16px", border: "2px dashed #d1d5db" }}>
-                <div style={{ fontSize: "3rem", marginBottom: "1rem" }}>🏫</div>
-                <h3 style={{ color: "#374151", fontWeight: "700", marginBottom: "0.5rem" }}>No colleges tracked yet</h3>
-                <p style={{ color: "#6b7280", marginBottom: "1.5rem" }}>Start adding colleges to track your application deadlines</p>
-                <button
-                  onClick={() => setView("add")}
-                  style={{ background: "#1e3a5f", color: "#fff", border: "none", borderRadius: "8px", padding: "0.75rem 1.5rem", cursor: "pointer", fontWeight: "700", fontSize: "0.95rem" }}
-                >
-                  Add Your First College
-                </button>
-              </div>
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
-                {trackedColleges.map((college) => {
-                  const urgency = getUrgencyColor(college.deadline);
-                  const days = getDaysUntil(college.deadline);
-                  return (
-                    <div
-                      key={college.id}
-                      style={{
-                        background: "#fff", borderRadius: "12px", border: `1.5px solid ${urgency.border}`,
-                        padding: "1.25rem 1.5rem", display: "flex", alignItems: "center", justifyContent: "space-between",
-                        gap: "1rem", flexWrap: "wrap", boxShadow: "0 1px 4px rgba(0,0,0,0.06)", transition: "box-shadow 0.2s",
-                      }}
-                    >
-                      <div style={{ display: "flex", alignItems: "center", gap: "1rem", flex: 1, minWidth: 0 }}>
-                        <div style={{ width: "12px", height: "12px", borderRadius: "50%", background: urgency.text, flexShrink: 0 }}></div>
-                        <div style={{ minWidth: 0 }}>
-                          <div style={{ fontWeight: "700", fontSize: "1.05rem", color: "#111827", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                            {college.college_name}
-                          </div>
-                          <div style={{ display: "flex", gap: "0.75rem", marginTop: "0.3rem", flexWrap: "wrap" }}>
-                            <span style={{ background: "#eff6ff", color: "#1d4ed8", padding: "0.2rem 0.6rem", borderRadius: "20px", fontSize: "0.75rem", fontWeight: "600" }}>
-                              {college.app_type}
-                            </span>
-                            {college.notes && (
-                              <span style={{ color: "#9ca3af", fontSize: "0.8rem", fontStyle: "italic" }}>
-                                {college.notes}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                      <div style={{ display: "flex", alignItems: "center", gap: "1rem", flexShrink: 0 }}>
-                        <div style={{ textAlign: "right" }}>
-                          <div style={{ fontWeight: "700", fontSize: "0.95rem", color: "#111827" }}>{formatDate(college.deadline)}</div>
-                          <div style={{
-                            background: urgency.bg, color: urgency.text, border: `1px solid ${urgency.border}`,
-                            borderRadius: "20px", padding: "0.2rem 0.65rem", fontSize: "0.78rem", fontWeight: "700", marginTop: "0.25rem",
-                          }}>
-                            {days < 0 ? "Past deadline" : urgency.label}
-                          </div>
-                        </div>
-                        <button
-                          onClick={() => handleDelete(college.id)}
-                          disabled={deleteLoading === college.id}
-                          title="Remove"
-                          style={{ background: "#fef2f2", color: "#dc2626", border: "1px solid #fca5a5", borderRadius: "8px", padding: "0.5rem 0.75rem", cursor: "pointer", fontSize: "0.85rem", fontWeight: "700", opacity: deleteLoading === college.id ? 0.5 : 1 }}
-                        >
-                          {deleteLoading === college.id ? "..." : "✕"}
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ADD COLLEGE VIEW */}
-        {view === "add" && (
-          <div style={{ maxWidth: "600px" }}>
-            <h2 style={{ margin: "0 0 0.5rem", fontSize: "1.5rem", fontWeight: "800", color: "#1e3a5f" }}>Add a College</h2>
-            <p style={{ margin: "0 0 1.5rem", color: "#6b7280" }}>Search our database or manually enter a college</p>
-
-            {/* Mode toggle */}
-            <div style={{ display: "flex", background: "#f3f4f6", borderRadius: "10px", padding: "4px", marginBottom: "1.5rem", width: "fit-content" }}>
-              {(["search", "manual"] as const).map((mode) => (
-                <button
-                  key={mode}
-                  onClick={() => { setAddMode(mode); setAddError(""); setSelectedCollege(null); setSearchQuery(""); setManualName(""); setCustomDeadline(""); }}
-                  style={{
-                    padding: "0.6rem 1.25rem", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "0.875rem", fontWeight: "600",
-                    background: addMode === mode ? "#fff" : "transparent",
-                    color: addMode === mode ? "#1e3a5f" : "#6b7280",
-                    boxShadow: addMode === mode ? "0 1px 4px rgba(0,0,0,0.1)" : "none",
-                    transition: "all 0.2s",
-                  }}
-                >
-                  {mode === "search" ? "🔍 Search Database" : "✏️ Enter Manually"}
-                </button>
-              ))}
-            </div>
-
-            <form onSubmit={handleAddCollege} style={{ background: "#fff", borderRadius: "16px", padding: "1.75rem", boxShadow: "0 2px 12px rgba(0,0,0,0.08)", border: "1px solid #e5e7eb" }}>
-
-              {addMode === "search" ? (
-                <div style={{ marginBottom: "1.25rem", position: "relative" }}>
-                  <label style={{ display: "block", fontSize: "0.875rem", fontWeight: "600", color: "#374151", marginBottom: "0.4rem" }}>Search Colleges</label>
-                  <input
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => handleSearch(e.target.value)}
-                    placeholder="e.g. Harvard, MIT, Stanford..."
-                    style={{ width: "100%", padding: "0.75rem 1rem", border: "1.5px solid #d1d5db", borderRadius: "8px", fontSize: "0.95rem", outline: "none", boxSizing: "border-box" }}
-                    onFocus={(e) => e.target.style.borderColor = "#2d6a9f"}
-                    onBlur={(e) => e.target.style.borderColor = "#d1d5db"}
-                  />
-                  {searchResults.length > 0 && (
-                    <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: "#fff", border: "1.5px solid #d1d5db", borderRadius: "8px", boxShadow: "0 8px 24px rgba(0,0,0,0.12)", zIndex: 50, marginTop: "4px", overflow: "hidden" }}>
-                      {searchResults.map((college) => (
-                        <button
-                          key={college.name}
-                          type="button"
-                          onClick={() => selectCollege(college)}
-                          style={{ width: "100%", padding: "0.75rem 1rem", border: "none", background: "transparent", cursor: "pointer", textAlign: "left", display: "flex", flexDirection: "column", gap: "0.15rem", borderBottom: "1px solid #f3f4f6" }}
-                          onMouseEnter={(e) => (e.currentTarget.style.background = "#f0f7ff")}
-                          onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-                        >
-                          <span style={{ fontWeight: "600", color: "#111827", fontSize: "0.9rem" }}>{college.name}</span>
-                          <span style={{ color: "#6b7280", fontSize: "0.78rem" }}>{college.location} · {college.type}</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                  {selectedCollege && (
-                    <div style={{ marginTop: "0.5rem", background: "#f0f7ff", borderRadius: "8px", padding: "0.6rem 0.9rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                      <span style={{ color: "#2d6a9f", fontSize: "1rem" }}>✓</span>
-                      <span style={{ fontWeight: "600", color: "#1e3a5f", fontSize: "0.875rem" }}>{selectedCollege.name}</span>
-                      <span style={{ color: "#6b7280", fontSize: "0.8rem" }}>— {selectedCollege.location}</span>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div style={{ marginBottom: "1.25rem" }}>
-                  <label style={{ display: "block", fontSize: "0.875rem", fontWeight: "600", color: "#374151", marginBottom: "0.4rem" }}>College Name</label>
-                  <input
-                    type="text"
-                    value={manualName}
-                    onChange={(e) => setManualName(e.target.value)}
-                    placeholder="e.g. University of Michigan"
-                    style={{ width: "100%", padding: "0.75rem 1rem", border: "1.5px solid #d1d5db", borderRadius: "8px", fontSize: "0.95rem", outline: "none", boxSizing: "border-box" }}
-                    onFocus={(e) => e.target.style.borderColor = "#2d6a9f"}
-                    onBlur={(e) => e.target.style.borderColor = "#d1d5db"}
-                  />
-                </div>
-              )}
-
-              {/* Application Type */}
-              <div style={{ marginBottom: "1.25rem" }}>
-                <label style={{ display: "block", fontSize: "0.875rem", fontWeight: "600", color: "#374151", marginBottom: "0.6rem" }}>Application Type</label>
-                <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap" }}>
-                  {APP_TYPES.map((type) => (
-                    <button
-                      key={type}
-                      type="button"
-                      onClick={() => handleAppTypeChange(type)}
-                      style={{
-                        padding: "0.55rem 1rem", border: selectedAppType === type ? "2px solid #1e3a5f" : "2px solid #d1d5db",
-                        borderRadius: "8px", cursor: "pointer", fontSize: "0.85rem", fontWeight: "600",
-                        background: selectedAppType === type ? "#1e3a5f" : "#fff",
-                        color: selectedAppType === type ? "#fff" : "#374151",
-                        transition: "all 0.15s",
-                      }}
-                    >
-                      {type}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Deadline */}
-              <div style={{ marginBottom: "1.25rem" }}>
-                <label style={{ display: "block", fontSize: "0.875rem", fontWeight: "600", color: "#374151", marginBottom: "0.4rem" }}>
-                  Deadline Date
-                  {addMode === "search" && selectedCollege && customDeadline && (
-                    <span style={{ fontWeight: "400", color: "#16a34a", marginLeft: "0.5rem", fontSize: "0.8rem" }}>✓ Auto-filled</span>
-                  )}
-                </label>
-                <input
-                  type="date"
-                  value={customDeadline}
-                  onChange={(e) => setCustomDeadline(e.target.value)}
-                  style={{ width: "100%", padding: "0.75rem 1rem", border: "1.5px solid #d1d5db", borderRadius: "8px", fontSize: "0.95rem", outline: "none", boxSizing: "border-box" }}
-                  onFocus={(e) => e.target.style.borderColor = "#2d6a9f"}
-                  onBlur={(e) => e.target.style.borderColor = "#d1d5db"}
-                />
-                {addMode === "search" && selectedCollege && !selectedCollege.deadlines[selectedAppType] && (
-                  <p style={{ margin: "0.4rem 0 0", color: "#d97706", fontSize: "0.8rem" }}>
-                    ⚠ No preset deadline for this application type — please enter manually.
-                  </p>
-                )}
-              </div>
-
-              {/* Notes */}
-              <div style={{ marginBottom: "1.5rem" }}>
-                <label style={{ display: "block", fontSize: "0.875rem", fontWeight: "600", color: "#374151", marginBottom: "0.4rem" }}>Notes (optional)</label>
-                <input
-                  type="text"
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  placeholder="e.g. Safety school, Need to write supplement..."
-                  style={{ width: "100%", padding: "0.75rem 1rem", border: "1.5px solid #d1d5db", borderRadius: "8px", fontSize: "0.95rem", outline: "none", boxSizing: "border-box" }}
-                  onFocus={(e) => e.target.style.borderColor = "#2d6a9f"}
-                  onBlur={(e) => e.target.style.borderColor = "#d1d5db"}
-                />
-              </div>
-
-              {addError && (
-                <div style={{ background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: "8px", padding: "0.75rem", color: "#dc2626", fontSize: "0.875rem", marginBottom: "1rem" }}>
-                  {addError}
-                </div>
-              )}
-              {addSuccess && (
-                <div style={{ background: "#f0fdf4", border: "1px solid #86efac", borderRadius: "8px", padding: "0.75rem", color: "#16a34a", fontSize: "0.875rem", marginBottom: "1rem", fontWeight: "600" }}>
-                  ✓ {addSuccess}
-                </div>
-              )}
-
+          <h3 style={{ ...styles.sectionLabel, marginTop: 24 }}>⏰ Reminder Schedule</h3>
+          <p style={styles.hintText}>Select when to receive reminders before each deadline:</p>
+          <div style={styles.reminderOptions}>
+            {REMINDER_OPTIONS.map((opt) => (
               <button
-                type="submit"
-                disabled={addLoading}
-                style={{ width: "100%", padding: "0.9rem", background: addLoading ? "#93c5fd" : "#1e3a5f", color: "#fff", border: "none", borderRadius: "8px", fontSize: "1rem", fontWeight: "700", cursor: addLoading ? "not-allowed" : "pointer", transition: "background 0.2s" }}
+                key={opt.value}
+                style={{ ...styles.reminderChip, ...(reminders.includes(opt.value) ? styles.reminderChipSelected : {}) }}
+                onClick={() => toggleReminder(opt.value)}
               >
-                {addLoading ? "Adding..." : "Add to My Dashboard"}
+                {reminders.includes(opt.value) ? "✓ " : ""}{opt.label}
               </button>
-            </form>
+            ))}
           </div>
-        )}
-      </main>
+
+          <div style={styles.smsSection}>
+            <h3 style={styles.sectionLabel}>📱 SMS Reminders <span style={styles.optionalTag}>(Optional)</span></h3>
+            <p style={styles.hintText}>Enter your phone number for SMS reminders.</p>
+            <input
+              style={styles.input}
+              type="tel"
+              placeholder="+1 (555) 000-0000"
+              value={reminderPhone}
+              onChange={(e) => setReminderPhone(e.target.value)}
+            />
+            <p style={styles.smsNote}>
+              ℹ️ SMS delivery requires Twilio credentials configured on the server. Email reminders always work.
+            </p>
+          </div>
+        </div>
+
+        <div style={styles.btnRow}>
+          <button style={styles.secondaryBtn} onClick={() => setStep("schools")}>← Back</button>
+          <button style={styles.primaryBtn} onClick={saveAndFinish}>
+            {saveStatus || "Save & View Dashboard →"}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // DASHBOARD
+  return (
+    <div style={styles.pageContainer}>
+      <div style={styles.dashHeader}>
+        <div>
+          <h1 style={styles.dashTitle}>🎓 EduTracker</h1>
+          {userEmail && <p style={styles.dashUser}>{userEmail}</p>}
+        </div>
+        <div style={styles.dashActions}>
+          <button style={styles.secondaryBtn} onClick={() => setStep("schools")}>
+            ✏️ Edit Schools
+          </button>
+          <button style={styles.secondaryBtn} onClick={() => setStep("reminders")}>
+            🔔 Reminders
+          </button>
+          <button
+            style={styles.ghostBtn}
+            onClick={() => {
+              localStorage.removeItem("edutracker_prefs");
+              setSelectedSchools([]);
+              setUserEmail("");
+              setEmail("");
+              setPassword("");
+              setStep("auth");
+            }}
+          >
+            Log Out
+          </button>
+        </div>
+      </div>
+
+      {/* Stats row */}
+      <div style={styles.statsRow}>
+        <div style={styles.statCard}>
+          <p style={styles.statNum}>{selectedSchools.length}</p>
+          <p style={styles.statLabel}>Schools</p>
+        </div>
+        <div style={styles.statCard}>
+          <p style={styles.statNum}>{deadlines.length}</p>
+          <p style={styles.statLabel}>Deadlines</p>
+        </div>
+        <div style={styles.statCard}>
+          <p style={{ ...styles.statNum, color: "#ef4444" }}>
+            {deadlines.filter((d) => d.daysUntil >= 0 && d.daysUntil <= 7).length}
+          </p>
+          <p style={styles.statLabel}>Due This Week</p>
+        </div>
+        <div style={styles.statCard}>
+          <p style={{ ...styles.statNum, color: "#f97316" }}>
+            {deadlines.filter((d) => d.daysUntil > 7 && d.daysUntil <= 30).length}
+          </p>
+          <p style={styles.statLabel}>Due This Month</p>
+        </div>
+      </div>
+
+      {/* Reminder info banner */}
+      {reminders.length > 0 && reminderEmail && (
+        <div style={styles.reminderBanner}>
+          🔔 Email reminders set for <strong>{reminders.sort((a, b) => b - a).join(", ")} days before</strong> each deadline → <strong>{reminderEmail}</strong>
+          {reminderPhone && <> · SMS → <strong>{reminderPhone}</strong></>}
+        </div>
+      )}
+
+      {/* Filters */}
+      <div style={styles.filterBar}>
+        <select
+          style={styles.select}
+          value={filterDeadlineType}
+          onChange={(e) => setFilterDeadlineType(e.target.value as "All" | DeadlineType)}
+        >
+          <option value="All">All Types</option>
+          <option value="ED1">ED1</option>
+          <option value="ED2">ED2</option>
+          <option value="EA">EA</option>
+          <option value="RD">Regular Decision</option>
+        </select>
+        <select
+          style={styles.select}
+          value={filterUrgency}
+          onChange={(e) => setFilterUrgency(e.target.value as "All" | "urgent" | "soon" | "upcoming")}
+        >
+          <option value="All">All Urgencies</option>
+          <option value="urgent">🔴 Urgent (≤7 days)</option>
+          <option value="soon">🟡 Soon (8–30 days)</option>
+          <option value="upcoming">🟢 Upcoming (30+ days)</option>
+        </select>
+      </div>
+
+      {filteredDeadlines.length === 0 ? (
+        <div style={styles.emptyState}>
+          <p style={styles.emptyIcon}>📅</p>
+          <p style={styles.emptyTitle}>
+            {selectedSchools.length === 0
+              ? "No schools selected yet"
+              : "No deadlines match your filters"}
+          </p>
+          {selectedSchools.length === 0 && (
+            <button style={styles.primaryBtn} onClick={() => setStep("schools")}>
+              Add Schools
+            </button>
+          )}
+        </div>
+      ) : (
+        <div style={styles.deadlineList}>
+          {filteredDeadlines.map((d, i) => {
+            const isPast = d.daysUntil < 0;
+            return (
+              <div
+                key={`${d.collegeId}-${d.type}-${i}`}
+                style={{
+                  ...styles.deadlineItem,
+                  backgroundColor: urgencyBg(d.daysUntil),
+                  opacity: isPast ? 0.6 : 1,
+                }}
+              >
+                <div style={styles.deadlineLeft}>
+                  <div
+                    style={{
+                      ...styles.deadlineTypeBadge,
+                      backgroundColor: urgencyColor(d.daysUntil),
+                    }}
+                  >
+                    {d.type}
+                  </div>
+                  <div>
+                    <p style={styles.deadlineCollegeName}>{d.collegeName}</p>
+                    <p style={styles.deadlineDate}>{formatDate(d.date)}</p>
+                  </div>
+                </div>
+                <div style={styles.deadlineRight}>
+                  {isPast ? (
+                    <span style={styles.pastBadge}>Past</span>
+                  ) : d.daysUntil === 0 ? (
+                    <span style={{ ...styles.urgencyBadge, backgroundColor: "#ef4444" }}>Today!</span>
+                  ) : (
+                    <span
+                      style={{
+                        ...styles.urgencyBadge,
+                        backgroundColor: urgencyColor(d.daysUntil),
+                      }}
+                    >
+                      {d.daysUntil}d
+                    </span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
+
+const styles: Record<string, React.CSSProperties> = {
+  authContainer: {
+    minHeight: "100vh",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    background: "linear-gradient(135deg, #1e3a5f 0%, #2d6a4f 100%)",
+    padding: "20px",
+  },
+  authCard: {
+    background: "#fff",
+    borderRadius: 16,
+    padding: "40px 36px",
+    width: "100%",
+    maxWidth: 420,
+    boxShadow: "0 20px 60px rgba(0,0,0,0.2)",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: 12,
+  },
+  logo: { fontSize: 48 },
+  appTitle: { margin: 0, fontSize: 28, fontWeight: 800, color: "#1e3a5f" },
+  appSubtitle: { margin: "0 0 8px", color: "#6b7280", fontSize: 14, textAlign: "center" },
+  tabRow: { display: "flex", gap: 0, borderRadius: 8, overflow: "hidden", border: "1px solid #e5e7eb", width: "100%" },
+  tab: {
+    flex: 1,
+    padding: "10px 0",
+    border: "none",
+    background: "#f9fafb",
+    cursor: "pointer",
+    fontWeight: 600,
+    fontSize: 14,
+    color: "#6b7280",
+  },
+  tabActive: { background: "#1e3a5f", color: "#fff" },
+  input: {
+    width: "100%",
+    padding: "12px 14px",
+    borderRadius: 8,
+    border: "1px solid #d1d5db",
+    fontSize: 14,
+    outline: "none",
+    boxSizing: "border-box",
+    fontFamily: "inherit",
+  },
+  searchInput: { flex: 1, minWidth: 200 },
+  errorMsg: { color: "#ef4444", fontSize: 13, margin: "4px 0", textAlign: "center" },
+  primaryBtn: {
+    background: "#1e3a5f",
+    color: "#fff",
+    border: "none",
+    borderRadius: 8,
+    padding: "12px 24px",
+    fontSize: 15,
+    fontWeight: 700,
+    cursor: "pointer",
+    width: "100%",
+    transition: "background 0.2s",
+  },
+  btnInline: { width: "auto" },
+  secondaryBtn: {
+    background: "#f3f4f6",
+    color: "#374151",
+    border: "1px solid #d1d5db",
+    borderRadius: 8,
+    padding: "10px 20px",
+    fontSize: 14,
+    fontWeight: 600,
+    cursor: "pointer",
+  },
+  ghostBtn: {
+    background: "transparent",
+    color: "#6b7280",
+    border: "1px solid #e5e7eb",
+    borderRadius: 8,
+    padding: "10px 16px",
+    fontSize: 13,
+    cursor: "pointer",
+  },
+  pageContainer: {
+    maxWidth: 960,
+    margin: "0 auto",
+    padding: "24px 16px 80px",
+    fontFamily: "system-ui, sans-serif",
+  },
+  onboardingHeader: { textAlign: "center", marginBottom: 32 },
+  stepIndicator: { display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 16 },
+  stepDot: {
+    width: 32, height: 32, borderRadius: "50%", background: "#1e3a5f",
+    color: "#fff", display: "flex", alignItems: "center", justifyContent: "center",
+    fontWeight: 700, fontSize: 14,
+  },
+  stepDotDone: {
+    width: 32, height: 32, borderRadius: "50%", background: "#22c55e",
+    color: "#fff", display: "flex", alignItems: "center", justifyContent: "center",
+    fontWeight: 700, fontSize: 14,
+  },
+  stepDotInactive: {
+    width: 32, height: 32, borderRadius: "50%", background: "#e5e7eb",
+    color: "#9ca3af", display: "flex", alignItems: "center", justifyContent: "center",
+    fontWeight: 700, fontSize: 14,
+  },
+  stepLine: { width: 40, height: 2, background: "#e5e7eb" },
+  stepTitle: { fontSize: 26, fontWeight: 800, color: "#1e3a5f", margin: "0 0 8px" },
+  stepSubtitle: { fontSize: 15, color: "#6b7280", margin: 0 },
+  filterBar: { display: "flex", gap: 10, marginBottom: 20, flexWrap: "wrap" },
+  select: {
+    padding: "10px 12px",
+    borderRadius: 8,
+    border: "1px solid #d1d5db",
+    fontSize: 14,
+    background: "#fff",
+    cursor: "pointer",
+    fontFamily: "inherit",
+  },
+  collegeGrid: { display: "flex", flexDirection: "column", gap: 10 },
+  collegeCard: {
+    background: "#fff",
+    border: "1px solid #e5e7eb",
+    borderRadius: 12,
+    padding: "14px 16px",
+    transition: "border-color 0.2s",
+  },
+  collegeCardSelected: { borderColor: "#1e3a5f", boxShadow: "0 0 0 2px rgba(30,58,95,0.12)" },
+  collegeCardHeader: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 },
+  collegeName: { margin: 0, fontWeight: 700, fontSize: 15, color: "#111827" },
+  collegeMeta: { margin: "2px 0 0", fontSize: 12, color: "#9ca3af" },
+  acceptRate: {
+    fontSize: 12, fontWeight: 700, color: "#6b7280",
+    background: "#f3f4f6", borderRadius: 6, padding: "4px 8px",
+  },
+  deadlineRow: { display: "flex", gap: 8, flexWrap: "wrap" },
+  deadlineChip: {
+    display: "flex", flexDirection: "column", alignItems: "center",
+    padding: "6px 12px", borderRadius: 8, border: "1px solid #e5e7eb",
+    background: "#f9fafb", cursor: "pointer", fontSize: 12, fontWeight: 700,
+    color: "#374151", gap: 2, transition: "all 0.15s",
+  },
+  deadlineChipSelected: { background: "#1e3a5f", color: "#fff", borderColor: "#1e3a5f" },
+  chipDate: { fontSize: 10, fontWeight: 400, opacity: 0.8 },
+  stickyBottom: {
+    position: "fixed", bottom: 0, left: 0, right: 0,
+    background: "#fff", borderTop: "1px solid #e5e7eb",
+    padding: "14px 24px", display: "flex", justifyContent: "space-between",
+    alignItems: "center", zIndex: 100,
+  },
+  selectionCount: { fontSize: 14, color: "#374151", fontWeight: 600, margin: 0 },
+  reminderCard: {
+    background: "#fff", border: "1px solid #e5e7eb", borderRadius: 16,
+    padding: "28px 24px", maxWidth: 540, margin: "0 auto 24px",
+    display: "flex", flexDirection: "column", gap: 10,
+  },
+  sectionLabel: { fontSize: 16, fontWeight: 700, color: "#1e3a5f", margin: "0 0 4px" },
+  hintText: { fontSize: 13, color: "#6b7280", margin: "0 0 8px" },
+  reminderOptions: { display: "flex", gap: 10, flexWrap: "wrap" },
+  reminderChip: {
+    padding: "10px 16px", borderRadius: 8, border: "1px solid #d1d5db",
+    background: "#f9fafb", cursor: "pointer", fontSize: 14, fontWeight: 600,
+    color: "#374151", transition: "all 0.15s",
+  },
+  reminderChipSelected: { background: "#1e3a5f", color: "#fff", borderColor: "#1e3a5f" },
+  smsSection: { marginTop: 8, padding: "16px", background: "#f8fafc", borderRadius: 10, border: "1px solid #e2e8f0" },
+  optionalTag: { fontSize: 12, color: "#9ca3af", fontWeight: 400 },
+  smsNote: { fontSize: 12, color: "#9ca3af", margin: "8px 0 0", lineHeight: 1.5 },
+  btnRow: { display: "flex", gap: 12, justifyContent: "center", maxWidth: 540, margin: "0 auto" },
+  dashHeader: {
+    display: "flex", justifyContent: "space-between", alignItems: "flex-start",
+    marginBottom: 24, flexWrap: "wrap", gap: 12,
+  },
+  dashTitle: { margin: 0, fontSize: 26, fontWeight: 800, color: "#1e3a5f" },
+  dashUser: { margin: "4px 0 0", fontSize: 13, color: "#9ca3af" },
+  dashActions: { display: "flex", gap: 8, flexWrap: "wrap" },
+  statsRow: { display: "flex", gap: 12, marginBottom: 20, flexWrap: "wrap" },
+  statCard: {
+    flex: 1, minWidth: 100, background: "#fff", border: "1px solid #e5e7eb",
+    borderRadius: 12, padding: "16px", textAlign: "center",
+  },
+  statNum: { margin: 0, fontSize: 28, fontWeight: 800, color: "#1e3a5f" },
+  statLabel: { margin: "4px 0 0", fontSize: 12, color: "#6b7280", fontWeight: 500 },
+  reminderBanner: {
+    background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 10,
+    padding: "12px 16px", fontSize: 13, color: "#1e40af", marginBottom: 20, lineHeight: 1.6,
+  },
+  deadlineList: { display: "flex", flexDirection: "column", gap: 8 },
+  deadlineItem: {
+    display: "flex", justifyContent: "space-between", alignItems: "center",
+    padding: "14px 16px", borderRadius: 12, border: "1px solid rgba(0,0,0,0.06)",
+    transition: "opacity 0.2s",
+  },
+  deadlineLeft: { display: "flex", alignItems: "center", gap: 14 },
+  deadlineTypeBadge: {
+    color: "#fff", fontWeight: 800, fontSize: 12,
+    padding: "6px 10px", borderRadius: 8, minWidth: 44, textAlign: "center",
+  },
+  deadlineCollegeName: { margin: 0, fontWeight: 700, fontSize: 15, color: "#111827" },
+  deadlineDate: { margin: "2px 0 0", fontSize: 12, color: "#6b7280" },
+  deadlineRight: { display: "flex", alignItems: "center" },
+  urgencyBadge: {
+    color: "#fff", fontWeight: 800, fontSize: 13,
+    padding: "6px 12px", borderRadius: 20,
+  },
+  pastBadge: {
+    color: "#9ca3af", fontWeight: 600, fontSize: 12,
+    padding: "6px 12px", borderRadius: 20,
+    background: "#f3f4f6", border: "1px solid #e5e7eb",
+  },
+  emptyState: {
+    textAlign: "center", padding: "60px 20px",
+    display: "flex", flexDirection: "column", alignItems: "center", gap: 16,
+  },
+  emptyIcon: { fontSize: 48, margin: 0 },
+  emptyTitle: { fontSize: 18, color: "#6b7280", margin: 0, fontWeight: 600 },
+};
