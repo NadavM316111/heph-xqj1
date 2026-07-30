@@ -1,751 +1,590 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 
-interface College {
+interface Application {
   id: string;
-  name: string;
-  location: string;
-  commonApp: string | null;
-  ea: string | null;
-  ed: string | null;
-  ed2: string | null;
-  rd: string;
-  logo: string;
+  schoolName: string;
+  deadline: string;
+  type: "EA" | "ED" | "RD" | "ED2" | "Rolling";
+  status: "Not Started" | "In Progress" | "Submitted";
+  notes: string;
 }
 
-interface UserProfile {
-  name: string;
-  email: string;
-  phone: string;
-  gradYear: string;
-}
+const STORAGE_KEY = "edutracker_applications";
 
-interface SavedCollege {
-  id: string;
-  collegeId: string;
-  collegeName: string;
-  deadlineType: string;
-  deadlineDate: string;
-  reminders: string[];
-  addedAt: string;
-}
-
-interface Reminder {
-  id: string;
-  collegeId: string;
-  collegeName: string;
-  deadlineType: string;
-  deadlineDate: string;
-  daysLeft: number;
-  urgency: "critical" | "urgent" | "moderate" | "early";
-}
-
-const COLLEGES: College[] = [
-  { id: "harvard", name: "Harvard University", location: "Cambridge, MA", commonApp: "2024-11-01", ea: null, ed: null, ed2: null, rd: "2025-01-01", logo: "🎓" },
-  { id: "yale", name: "Yale University", location: "New Haven, CT", commonApp: "2024-11-01", ea: null, ed: "2024-11-01", ed2: null, rd: "2025-01-02", logo: "🎓" },
-  { id: "princeton", name: "Princeton University", location: "Princeton, NJ", commonApp: "2024-11-01", ea: null, ed: "2024-11-01", ed2: null, rd: "2025-01-01", logo: "🎓" },
-  { id: "columbia", name: "Columbia University", location: "New York, NY", commonApp: "2024-11-01", ea: null, ed: "2024-11-01", ed2: null, rd: "2025-01-01", logo: "🎓" },
-  { id: "mit", name: "MIT", location: "Cambridge, MA", commonApp: null, ea: "2024-11-01", ed: null, ed2: null, rd: "2025-01-01", logo: "⚙️" },
-  { id: "stanford", name: "Stanford University", location: "Stanford, CA", commonApp: "2024-11-01", ea: null, ed: null, ed2: null, rd: "2025-01-02", logo: "🌲" },
-  { id: "chicago", name: "University of Chicago", location: "Chicago, IL", commonApp: "2024-11-01", ea: "2024-11-01", ed: "2024-11-01", ed2: "2025-01-04", rd: "2025-01-06", logo: "🎓" },
-  { id: "upenn", name: "University of Pennsylvania", location: "Philadelphia, PA", commonApp: "2024-11-01", ea: null, ed: "2024-11-01", ed2: null, rd: "2025-01-01", logo: "🎓" },
-  { id: "duke", name: "Duke University", location: "Durham, NC", commonApp: "2024-11-01", ea: null, ed: "2024-11-01", ed2: null, rd: "2025-01-02", logo: "🔵" },
-  { id: "dartmouth", name: "Dartmouth College", location: "Hanover, NH", commonApp: "2024-11-01", ea: null, ed: "2024-11-01", ed2: null, rd: "2025-01-01", logo: "🎓" },
-  { id: "brown", name: "Brown University", location: "Providence, RI", commonApp: "2024-11-01", ea: null, ed: "2024-11-01", ed2: null, rd: "2025-01-01", logo: "🎓" },
-  { id: "cornell", name: "Cornell University", location: "Ithaca, NY", commonApp: "2024-11-01", ea: null, ed: "2024-11-01", ed2: null, rd: "2025-01-02", logo: "🎓" },
-  { id: "northwestern", name: "Northwestern University", location: "Evanston, IL", commonApp: "2024-11-01", ea: null, ed: "2024-11-01", ed2: null, rd: "2025-01-01", logo: "🎓" },
-  { id: "vanderbilt", name: "Vanderbilt University", location: "Nashville, TN", commonApp: "2024-11-01", ea: null, ed: "2024-11-01", ed2: null, rd: "2025-01-01", logo: "⭐" },
-  { id: "rice", name: "Rice University", location: "Houston, TX", commonApp: "2024-11-01", ea: null, ed: "2024-11-01", ed2: null, rd: "2025-01-01", logo: "🎓" },
-  { id: "wustl", name: "Washington University in St. Louis", location: "St. Louis, MO", commonApp: "2024-11-01", ea: null, ed: "2024-11-01", ed2: "2025-01-01", rd: "2025-01-02", logo: "🎓" },
-  { id: "notre-dame", name: "University of Notre Dame", location: "Notre Dame, IN", commonApp: "2024-11-01", ea: "2024-11-01", ed: null, ed2: null, rd: "2025-01-01", logo: "☘️" },
-  { id: "georgetown", name: "Georgetown University", location: "Washington, DC", commonApp: null, ea: null, ed: null, ed2: null, rd: "2025-01-10", logo: "🎓" },
-  { id: "emory", name: "Emory University", location: "Atlanta, GA", commonApp: "2024-11-01", ea: "2024-11-01", ed: "2024-11-01", ed2: "2025-01-01", rd: "2025-01-15", logo: "🎓" },
-  { id: "uc-berkeley", name: "UC Berkeley", location: "Berkeley, CA", commonApp: null, ea: null, ed: null, ed2: null, rd: "2024-11-30", logo: "🐻" },
-  { id: "ucla", name: "UCLA", location: "Los Angeles, CA", commonApp: null, ea: null, ed: null, ed2: null, rd: "2024-11-30", logo: "🐻" },
-  { id: "uc-san-diego", name: "UC San Diego", location: "La Jolla, CA", commonApp: null, ea: null, ed: null, ed2: null, rd: "2024-11-30", logo: "🔱" },
-  { id: "uc-santa-barbara", name: "UC Santa Barbara", location: "Santa Barbara, CA", commonApp: null, ea: null, ed: null, ed2: null, rd: "2024-11-30", logo: "🌊" },
-  { id: "uc-irvine", name: "UC Irvine", location: "Irvine, CA", commonApp: null, ea: null, ed: null, ed2: null, rd: "2024-11-30", logo: "🦅" },
-  { id: "uc-davis", name: "UC Davis", location: "Davis, CA", commonApp: null, ea: null, ed: null, ed2: null, rd: "2024-11-30", logo: "🐄" },
-  { id: "michigan", name: "University of Michigan", location: "Ann Arbor, MI", commonApp: "2024-11-01", ea: "2024-11-01", ed: null, ed2: null, rd: "2025-02-01", logo: "🐺" },
-  { id: "virginia", name: "University of Virginia", location: "Charlottesville, VA", commonApp: "2024-11-01", ea: "2024-11-01", ed: null, ed2: null, rd: "2025-01-01", logo: "🎓" },
-  { id: "georgetown-u", name: "Georgetown University", location: "Washington, DC", commonApp: null, ea: null, ed: null, ed2: null, rd: "2025-01-10", logo: "🎓" },
-  { id: "carnegie-mellon", name: "Carnegie Mellon University", location: "Pittsburgh, PA", commonApp: "2024-11-01", ea: "2024-11-01", ed: "2024-11-01", ed2: null, rd: "2025-01-03", logo: "🤖" },
-  { id: "tufts", name: "Tufts University", location: "Medford, MA", commonApp: "2024-11-01", ea: null, ed: "2024-11-01", ed2: "2025-01-01", rd: "2025-01-01", logo: "🐘" },
-  { id: "johns-hopkins", name: "Johns Hopkins University", location: "Baltimore, MD", commonApp: "2024-11-01", ea: null, ed: "2024-11-01", ed2: null, rd: "2025-01-02", logo: "🎓" },
-  { id: "nyu", name: "New York University", location: "New York, NY", commonApp: "2024-11-01", ea: null, ed: "2024-11-01", ed2: "2025-01-01", rd: "2025-01-01", logo: "🗽" },
-  { id: "boston-university", name: "Boston University", location: "Boston, MA", commonApp: "2024-11-01", ea: null, ed: "2024-11-01", ed2: "2025-01-02", rd: "2025-01-02", logo: "🎓" },
-  { id: "boston-college", name: "Boston College", location: "Chestnut Hill, MA", commonApp: "2024-11-01", ea: null, ed: "2024-11-01", ed2: null, rd: "2025-01-01", logo: "🦅" },
-  { id: "wake-forest", name: "Wake Forest University", location: "Winston-Salem, NC", commonApp: "2024-11-01", ea: null, ed: "2024-11-01", ed2: null, rd: "2025-01-01", logo: "🎓" },
-  { id: "tulane", name: "Tulane University", location: "New Orleans, LA", commonApp: "2024-11-01", ea: "2024-11-01", ed: "2024-11-01", ed2: "2025-01-15", rd: "2025-01-15", logo: "🌿" },
-  { id: "usc", name: "University of Southern California", location: "Los Angeles, CA", commonApp: "2024-11-01", ea: null, ed: "2024-11-01", ed2: null, rd: "2025-01-15", logo: "✌️" },
-  { id: "unc", name: "UNC Chapel Hill", location: "Chapel Hill, NC", commonApp: "2024-10-15", ea: "2024-10-15", ed: null, ed2: null, rd: "2025-01-15", logo: "🐏" },
-  { id: "purdue", name: "Purdue University", location: "West Lafayette, IN", commonApp: "2024-11-01", ea: "2024-11-01", ed: null, ed2: null, rd: "2025-02-01", logo: "🚂" },
-  { id: "georgia-tech", name: "Georgia Tech", location: "Atlanta, GA", commonApp: "2024-11-01", ea: "2024-10-15", ed: null, ed2: null, rd: "2025-01-05", logo: "🐝" },
-  { id: "penn-state", name: "Penn State University", location: "State College, PA", commonApp: "2024-11-01", ea: null, ed: null, ed2: null, rd: "2025-02-01", logo: "🦁" },
-  { id: "ohio-state", name: "Ohio State University", location: "Columbus, OH", commonApp: "2024-11-01", ea: null, ed: null, ed2: null, rd: "2025-02-01", logo: "🌰" },
-  { id: "ut-austin", name: "UT Austin", location: "Austin, TX", commonApp: null, ea: "2024-11-01", ed: null, ed2: null, rd: "2025-12-01", logo: "🤘" },
-  { id: "uw-madison", name: "UW Madison", location: "Madison, WI", commonApp: "2024-11-01", ea: "2024-11-01", ed: null, ed2: null, rd: "2025-02-01", logo: "🦡" },
-  { id: "florida", name: "University of Florida", location: "Gainesville, FL", commonApp: "2024-11-01", ea: null, ed: null, ed2: null, rd: "2025-03-01", logo: "🐊" },
-  { id: "miami", name: "University of Miami", location: "Coral Gables, FL", commonApp: "2024-11-01", ea: "2024-11-01", ed: "2024-11-01", ed2: null, rd: "2025-02-01", logo: "🌴" },
-  { id: "lehigh", name: "Lehigh University", location: "Bethlehem, PA", commonApp: "2024-11-01", ea: null, ed: "2024-11-01", ed2: "2025-01-15", rd: "2025-01-15", logo: "🎓" },
-  { id: "villanova", name: "Villanova University", location: "Villanova, PA", commonApp: "2024-11-01", ea: null, ed: "2024-11-01", ed2: null, rd: "2025-01-15", logo: "🎓" },
-  { id: "fordham", name: "Fordham University", location: "New York, NY", commonApp: "2024-11-01", ea: null, ed: "2024-11-01", ed2: null, rd: "2025-01-01", logo: "🎓" },
-  { id: "american", name: "American University", location: "Washington, DC", commonApp: "2024-11-01", ea: "2024-11-01", ed: "2024-11-01", ed2: "2025-01-15", rd: "2025-01-15", logo: "🦅" },
-  { id: "gw", name: "George Washington University", location: "Washington, DC", commonApp: "2024-11-01", ea: null, ed: "2024-11-01", ed2: null, rd: "2025-01-05", logo: "🏛️" },
-  { id: "syracuse", name: "Syracuse University", location: "Syracuse, NY", commonApp: "2024-11-01", ea: "2024-11-15", ed: "2024-11-15", ed2: null, rd: "2025-01-01", logo: "🍊" },
-  { id: "drexel", name: "Drexel University", location: "Philadelphia, PA", commonApp: "2024-11-01", ea: null, ed: null, ed2: null, rd: "2025-03-01", logo: "🐉" },
-  { id: "arizona-state", name: "Arizona State University", location: "Tempe, AZ", commonApp: "2024-11-01", ea: null, ed: null, ed2: null, rd: "2025-02-01", logo: "☀️" },
-  { id: "arizona", name: "University of Arizona", location: "Tucson, AZ", commonApp: "2024-11-01", ea: null, ed: null, ed2: null, rd: "2025-05-01", logo: "🌵" },
-  { id: "colorado", name: "University of Colorado Boulder", location: "Boulder, CO", commonApp: "2024-11-01", ea: null, ed: null, ed2: null, rd: "2025-01-15", logo: "🏔️" },
-  { id: "denver", name: "University of Denver", location: "Denver, CO", commonApp: "2024-11-01", ea: "2024-11-01", ed: "2024-11-01", ed2: "2025-01-15", rd: "2025-01-15", logo: "🏔️" },
-  { id: "smu", name: "Southern Methodist University", location: "Dallas, TX", commonApp: "2024-11-01", ea: "2024-11-01", ed: "2024-11-01", ed2: "2025-01-15", rd: "2025-03-15", logo: "🐴" },
-  { id: "case-western", name: "Case Western Reserve University", location: "Cleveland, OH", commonApp: "2024-11-01", ea: "2024-11-01", ed: "2024-11-01", ed2: "2025-01-15", rd: "2025-01-15", logo: "🎓" },
-  { id: "rochester", name: "University of Rochester", location: "Rochester, NY", commonApp: "2024-11-01", ea: null, ed: "2024-11-01", ed2: "2025-01-01", rd: "2025-01-05", logo: "🎓" },
-  { id: "lehigh2", name: "Rensselaer Polytechnic Institute", location: "Troy, NY", commonApp: "2024-11-01", ea: null, ed: "2024-11-01", ed2: null, rd: "2025-01-15", logo: "⚙️" },
-  { id: "wpi", name: "Worcester Polytechnic Institute", location: "Worcester, MA", commonApp: "2024-11-01", ea: null, ed: "2024-11-01", ed2: "2025-02-01", rd: "2025-02-01", logo: "⚙️" },
-  { id: "stevens", name: "Stevens Institute of Technology", location: "Hoboken, NJ", commonApp: "2024-11-01", ea: null, ed: "2024-11-01", ed2: null, rd: "2025-02-01", logo: "⚙️" },
-  { id: "william-mary", name: "College of William & Mary", location: "Williamsburg, VA", commonApp: "2024-11-01", ea: "2024-11-01", ed: null, ed2: null, rd: "2025-01-08", logo: "🎓" },
-  { id: "james-madison", name: "James Madison University", location: "Harrisonburg, VA", commonApp: "2024-11-01", ea: "2024-11-01", ed: null, ed2: null, rd: "2025-01-15", logo: "🎓" },
-  { id: "clark", name: "Clark University", location: "Worcester, MA", commonApp: "2024-11-01", ea: null, ed: "2024-11-01", ed2: "2025-01-15", rd: "2025-02-01", logo: "🎓" },
-  { id: "bucknell", name: "Bucknell University", location: "Lewisburg, PA", commonApp: "2024-11-01", ea: null, ed: "2024-11-01", ed2: null, rd: "2025-01-15", logo: "🦬" },
-  { id: "colgate", name: "Colgate University", location: "Hamilton, NY", commonApp: "2024-11-01", ea: null, ed: "2024-11-15", ed2: null, rd: "2025-01-15", logo: "🎓" },
-  { id: "colby", name: "Colby College", location: "Waterville, ME", commonApp: "2024-11-01", ea: null, ed: "2024-11-01", ed2: null, rd: "2025-01-01", logo: "🎓" },
-  { id: "bowdoin", name: "Bowdoin College", location: "Brunswick, ME", commonApp: "2024-11-01", ea: null, ed: "2024-11-15", ed2: null, rd: "2025-01-01", logo: "🐻" },
-  { id: "middlebury", name: "Middlebury College", location: "Middlebury, VT", commonApp: "2024-11-01", ea: null, ed: "2024-11-01", ed2: null, rd: "2025-01-01", logo: "🏔️" },
-  { id: "hamilton", name: "Hamilton College", location: "Clinton, NY", commonApp: "2024-11-01", ea: null, ed: "2024-11-01", ed2: null, rd: "2025-01-01", logo: "🎓" },
-  { id: "bates", name: "Bates College", location: "Lewiston, ME", commonApp: "2024-11-01", ea: null, ed: "2024-11-01", ed2: null, rd: "2025-01-01", logo: "🎓" },
-  { id: "trinity", name: "Trinity College", location: "Hartford, CT", commonApp: "2024-11-01", ea: null, ed: "2024-11-15", ed2: null, rd: "2025-01-15", logo: "🎓" },
-  { id: "lafayette", name: "Lafayette College", location: "Easton, PA", commonApp: "2024-11-01", ea: null, ed: "2024-11-15", ed2: null, rd: "2025-01-15", logo: "🎓" },
-  { id: "dennison", name: "Denison University", location: "Granville, OH", commonApp: "2024-11-01", ea: "2024-11-01", ed: "2024-11-01", ed2: "2025-01-15", rd: "2025-02-01", logo: "🎓" },
-  { id: "dickinson", name: "Dickinson College", location: "Carlisle, PA", commonApp: "2024-11-01", ea: null, ed: "2024-11-15", ed2: null, rd: "2025-02-01", logo: "🎓" },
+const SCHOOL_SUGGESTIONS = [
+  "Harvard University", "Yale University", "Princeton University",
+  "MIT", "Stanford University", "Columbia University",
+  "University of Pennsylvania", "Brown University", "Dartmouth College",
+  "Cornell University", "Duke University", "Northwestern University",
+  "Johns Hopkins University", "Vanderbilt University", "Rice University",
+  "Washington University in St. Louis", "Notre Dame", "Georgetown University",
+  "Emory University", "Carnegie Mellon University", "UC Berkeley",
+  "UCLA", "University of Michigan", "University of Virginia",
+  "University of North Carolina", "Boston College", "Tufts University",
+  "New York University", "University of Southern California",
+  "Boston University", "Northeastern University", "Tulane University",
+  "Wake Forest University", "Villanova University", "Fordham University",
 ];
 
-type Step = "onboarding" | "search" | "dashboard";
-type Tab = "search" | "mycolleges" | "reminders";
+const TYPE_COLORS: Record<Application["type"], string> = {
+  EA: "#3b82f6",
+  ED: "#8b5cf6",
+  RD: "#6b7280",
+  ED2: "#ec4899",
+  Rolling: "#f59e0b",
+};
 
-function daysUntil(dateStr: string): number {
+const STATUS_COLORS: Record<Application["status"], string> = {
+  "Not Started": "#ef4444",
+  "In Progress": "#f59e0b",
+  "Submitted": "#10b981",
+};
+
+function daysUntil(deadline: string): number {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  const deadline = new Date(dateStr + "T00:00:00");
-  const diff = deadline.getTime() - today.getTime();
-  return Math.ceil(diff / (1000 * 60 * 60 * 24));
+  const d = new Date(deadline);
+  d.setHours(0, 0, 0, 0);
+  return Math.ceil((d.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
 }
 
 function formatDate(dateStr: string): string {
-  const date = new Date(dateStr + "T00:00:00");
-  return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  const d = new Date(dateStr + "T00:00:00");
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
-function getUrgency(days: number): "critical" | "urgent" | "moderate" | "early" {
-  if (days <= 7) return "critical";
-  if (days <= 14) return "urgent";
-  if (days <= 30) return "moderate";
-  return "early";
+function generateId(): string {
+  return Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 
-function urgencyColor(urgency: string): string {
-  switch (urgency) {
-    case "critical": return "#dc2626";
-    case "urgent": return "#ea580c";
-    case "moderate": return "#d97706";
-    default: return "#16a34a";
-  }
-}
-
-function urgencyBg(urgency: string): string {
-  switch (urgency) {
-    case "critical": return "#fef2f2";
-    case "urgent": return "#fff7ed";
-    case "moderate": return "#fffbeb";
-    default: return "#f0fdf4";
-  }
-}
+const defaultForm = (): Omit<Application, "id"> => ({
+  schoolName: "",
+  deadline: "",
+  type: "RD",
+  status: "Not Started",
+  notes: "",
+});
 
 export default function Home() {
-  const [step, setStep] = useState<Step>("onboarding");
-  const [activeTab, setActiveTab] = useState<Tab>("search");
-  const [profile, setProfile] = useState<UserProfile>({ name: "", email: "", phone: "", gradYear: "" });
-  const [savedColleges, setSavedColleges] = useState<SavedCollege[]>([]);
-  const [reminders, setReminders] = useState<Reminder[]>([]);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [toast, setToast] = useState<string | null>(null);
-  const [onboardStep, setOnboardStep] = useState(1);
-  const [onboardErrors, setOnboardErrors] = useState<Partial<UserProfile>>({});
-  const [userId, setUserId] = useState<string | null>(null);
-  const [addingCollegeId, setAddingCollegeId] = useState<string | null>(null);
-  const [expandedCollege, setExpandedCollege] = useState<string | null>(null);
-  const [filterState, setFilterState] = useState("all");
+  const [applications, setApplications] = useState<Application[]>([]);
+  const [showModal, setShowModal] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [form, setForm] = useState(defaultForm());
+  const [filter, setFilter] = useState<"all" | Application["status"]>("all");
+  const [sortBy, setSortBy] = useState<"deadline" | "school" | "status">("deadline");
+  const [search, setSearch] = useState("");
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [tracked, setTracked] = useState(false);
 
   useEffect(() => {
-    fetch("/api/track", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: window.location.pathname }) }).catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    const stored = localStorage.getItem("edutracker_profile");
-    const storedColleges = localStorage.getItem("edutracker_colleges");
-    const storedUserId = localStorage.getItem("edutracker_userid");
-    if (stored) {
-      const p = JSON.parse(stored) as UserProfile;
-      setProfile(p);
-      setStep("dashboard");
-    }
-    if (storedColleges) {
-      setSavedColleges(JSON.parse(storedColleges) as SavedCollege[]);
-    }
-    if (storedUserId) {
-      setUserId(storedUserId);
-    }
-  }, []);
-
-  const computeReminders = useCallback((colleges: SavedCollege[]) => {
-    const upcoming: Reminder[] = [];
-    colleges.forEach((sc) => {
-      const days = daysUntil(sc.deadlineDate);
-      if (days >= 0 && days <= 90) {
-        upcoming.push({
-          id: sc.id,
-          collegeId: sc.collegeId,
-          collegeName: sc.collegeName,
-          deadlineType: sc.deadlineType,
-          deadlineDate: sc.deadlineDate,
-          daysLeft: days,
-          urgency: getUrgency(days),
-        });
-      }
-    });
-    upcoming.sort((a, b) => a.daysLeft - b.daysLeft);
-    setReminders(upcoming);
-  }, []);
-
-  useEffect(() => {
-    computeReminders(savedColleges);
-  }, [savedColleges, computeReminders]);
-
-  const showToast = (msg: string) => {
-    setToast(msg);
-    setTimeout(() => setToast(null), 3000);
-  };
-
-  const validateOnboard = (): boolean => {
-    const errors: Partial<UserProfile> = {};
-    if (onboardStep === 1) {
-      if (!profile.name.trim()) errors.name = "Name is required";
-      if (!profile.gradYear || parseInt(profile.gradYear) < 2024 || parseInt(profile.gradYear) > 2030) errors.gradYear = "Enter a valid graduation year (2024–2030)";
-    }
-    if (onboardStep === 2) {
-      if (!profile.email.trim() || !profile.email.includes("@")) errors.email = "Valid email is required";
-    }
-    setOnboardErrors(errors);
-    return Object.keys(errors).length === 0;
-  };
-
-  const handleOnboardNext = async () => {
-    if (!validateOnboard()) return;
-    if (onboardStep < 2) {
-      setOnboardStep(2);
-      return;
-    }
-    setLoading(true);
-    try {
-      const res = await fetch("/api/auth", {
+    if (!tracked) {
+      fetch("/api/track", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: "signup", email: profile.email, password: `edu_${profile.email}_${profile.gradYear}` }),
+        body: JSON.stringify({ path: window.location.pathname }),
       });
-      const data = await res.json() as { ok?: boolean; email?: string; error?: string };
-      if (data.ok || data.email) {
-        const uid = `user_${Date.now()}`;
-        setUserId(uid);
-        localStorage.setItem("edutracker_userid", uid);
-        localStorage.setItem("edutracker_profile", JSON.stringify(profile));
-        setStep("dashboard");
-        showToast(`Welcome, ${profile.name}! 🎉`);
-      } else {
-        const loginRes = await fetch("/api/auth", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ mode: "login", email: profile.email, password: `edu_${profile.email}_${profile.gradYear}` }),
-        });
-        const loginData = await loginRes.json() as { ok?: boolean; email?: string; error?: string };
-        if (loginData.ok || loginData.email) {
-          const uid = `user_${Date.now()}`;
-          setUserId(uid);
-          localStorage.setItem("edutracker_userid", uid);
-          localStorage.setItem("edutracker_profile", JSON.stringify(profile));
-          setStep("dashboard");
-          showToast(`Welcome back, ${profile.name}! 👋`);
-        } else {
-          setOnboardErrors({ email: "Could not create account. Try a different email." });
-        }
-      }
-    } catch {
-      const uid = `user_${Date.now()}`;
-      setUserId(uid);
-      localStorage.setItem("edutracker_userid", uid);
-      localStorage.setItem("edutracker_profile", JSON.stringify(profile));
-      setStep("dashboard");
-      showToast(`Welcome, ${profile.name}! 🎉`);
-    } finally {
-      setLoading(false);
+      setTracked(true);
     }
+  }, [tracked]);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) setApplications(JSON.parse(raw));
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(applications));
+  }, [applications]);
+
+  const openAdd = () => {
+    setEditingId(null);
+    setForm(defaultForm());
+    setShowModal(true);
   };
 
-  const addCollege = (college: College, deadlineType: string, deadlineDate: string) => {
-    const existing = savedColleges.find((s) => s.collegeId === college.id && s.deadlineType === deadlineType);
-    if (existing) {
-      showToast("Already in your list!");
-      return;
+  const openEdit = (app: Application) => {
+    setEditingId(app.id);
+    setForm({ schoolName: app.schoolName, deadline: app.deadline, type: app.type, status: app.status, notes: app.notes });
+    setShowModal(true);
+    setExpandedId(null);
+  };
+
+  const closeModal = () => {
+    setShowModal(false);
+    setEditingId(null);
+    setForm(defaultForm());
+    setShowSuggestions(false);
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!form.schoolName.trim() || !form.deadline) return;
+    if (editingId) {
+      setApplications(prev => prev.map(a => a.id === editingId ? { ...form, id: editingId } : a));
+    } else {
+      setApplications(prev => [...prev, { ...form, id: generateId() }]);
     }
-    const newEntry: SavedCollege = {
-      id: `${college.id}_${deadlineType}_${Date.now()}`,
-      collegeId: college.id,
-      collegeName: college.name,
-      deadlineType,
-      deadlineDate,
-      reminders: ["30", "14", "7", "1"],
-      addedAt: new Date().toISOString(),
-    };
-    const updated = [...savedColleges, newEntry];
-    setSavedColleges(updated);
-    localStorage.setItem("edutracker_colleges", JSON.stringify(updated));
-    showToast(`${college.name} (${deadlineType}) added! ✅`);
+    closeModal();
   };
 
-  const removeCollege = (id: string) => {
-    const updated = savedColleges.filter((s) => s.id !== id);
-    setSavedColleges(updated);
-    localStorage.setItem("edutracker_colleges", JSON.stringify(updated));
-    showToast("Removed from your list");
+  const handleDelete = (id: string) => {
+    setApplications(prev => prev.filter(a => a.id !== id));
+    setDeleteConfirmId(null);
+    setExpandedId(null);
   };
 
-  const isAdded = (collegeId: string, deadlineType: string): boolean => {
-    return savedColleges.some((s) => s.collegeId === collegeId && s.deadlineType === deadlineType);
-  };
+  const filteredAndSorted = applications
+    .filter(a => filter === "all" || a.status === filter)
+    .filter(a => a.schoolName.toLowerCase().includes(search.toLowerCase()))
+    .sort((a, b) => {
+      if (sortBy === "deadline") return a.deadline.localeCompare(b.deadline);
+      if (sortBy === "school") return a.schoolName.localeCompare(b.schoolName);
+      if (sortBy === "status") return a.status.localeCompare(b.status);
+      return 0;
+    });
 
-  const filteredColleges = COLLEGES.filter((c) => {
-    const q = searchQuery.toLowerCase();
-    const matchesSearch = !q || c.name.toLowerCase().includes(q) || c.location.toLowerCase().includes(q);
-    if (filterState === "all") return matchesSearch;
-    const stateAbbr = filterState.toLowerCase();
-    return matchesSearch && c.location.toLowerCase().includes(stateAbbr);
-  });
+  const urgentCount = applications.filter(a => {
+    const d = daysUntil(a.deadline);
+    return d >= 0 && d <= 14 && a.status !== "Submitted";
+  }).length;
 
-  const states = Array.from(new Set(COLLEGES.map((c) => c.location.split(", ")[1]))).sort();
+  const submittedCount = applications.filter(a => a.status === "Submitted").length;
 
-  const deadlineTypes = (college: College): { type: string; date: string }[] => {
-    const types: { type: string; date: string }[] = [];
-    if (college.ea) types.push({ type: "EA", date: college.ea });
-    if (college.ed) types.push({ type: "ED", date: college.ed });
-    if (college.ed2) types.push({ type: "ED2", date: college.ed2 });
-    if (college.rd) types.push({ type: "RD", date: college.rd });
-    if (college.commonApp && !types.find((t) => t.date === college.commonApp)) {
-      types.unshift({ type: "Common App", date: college.commonApp });
-    }
-    return types;
-  };
-
-  if (step === "onboarding") {
-    return (
-      <div style={{ minHeight: "100vh", background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
-        <div style={{ background: "#fff", borderRadius: "24px", padding: "40px 32px", maxWidth: "440px", width: "100%", boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }}>
-          <div style={{ textAlign: "center", marginBottom: "32px" }}>
-            <div style={{ fontSize: "48px", marginBottom: "8px" }}>🎓</div>
-            <h1 style={{ fontSize: "28px", fontWeight: 800, color: "#1e1b4b", margin: "0 0 8px" }}>EduTracker</h1>
-            <p style={{ color: "#6b7280", fontSize: "15px", margin: 0 }}>Never miss a college application deadline</p>
-          </div>
-
-          <div style={{ display: "flex", gap: "8px", marginBottom: "32px" }}>
-            {[1, 2].map((s) => (
-              <div key={s} style={{ flex: 1, height: "4px", borderRadius: "2px", background: onboardStep >= s ? "#667eea" : "#e5e7eb", transition: "background 0.3s" }} />
-            ))}
-          </div>
-
-          {onboardStep === 1 && (
-            <div>
-              <h2 style={{ fontSize: "20px", fontWeight: 700, color: "#111827", marginBottom: "24px" }}>Let&apos;s get started 👋</h2>
-              <div style={{ marginBottom: "16px" }}>
-                <label style={{ display: "block", fontSize: "14px", fontWeight: 600, color: "#374151", marginBottom: "6px" }}>Your Name</label>
-                <input
-                  type="text"
-                  placeholder="e.g. Alex Johnson"
-                  value={profile.name}
-                  onChange={(e) => setProfile({ ...profile, name: e.target.value })}
-                  style={{ width: "100%", padding: "12px 16px", borderRadius: "12px", border: onboardErrors.name ? "2px solid #dc2626" : "2px solid #e5e7eb", fontSize: "15px", outline: "none", boxSizing: "border-box" }}
-                />
-                {onboardErrors.name && <p style={{ color: "#dc2626", fontSize: "12px", margin: "4px 0 0" }}>{onboardErrors.name}</p>}
-              </div>
-              <div style={{ marginBottom: "24px" }}>
-                <label style={{ display: "block", fontSize: "14px", fontWeight: 600, color: "#374151", marginBottom: "6px" }}>Graduation Year</label>
-                <select
-                  value={profile.gradYear}
-                  onChange={(e) => setProfile({ ...profile, gradYear: e.target.value })}
-                  style={{ width: "100%", padding: "12px 16px", borderRadius: "12px", border: onboardErrors.gradYear ? "2px solid #dc2626" : "2px solid #e5e7eb", fontSize: "15px", outline: "none", background: "#fff", boxSizing: "border-box" }}
-                >
-                  <option value="">Select year</option>
-                  {[2024, 2025, 2026, 2027, 2028].map((y) => <option key={y} value={y}>{y}</option>)}
-                </select>
-                {onboardErrors.gradYear && <p style={{ color: "#dc2626", fontSize: "12px", margin: "4px 0 0" }}>{onboardErrors.gradYear}</p>}
-              </div>
-            </div>
-          )}
-
-          {onboardStep === 2 && (
-            <div>
-              <h2 style={{ fontSize: "20px", fontWeight: 700, color: "#111827", marginBottom: "8px" }}>Contact Details</h2>
-              <p style={{ color: "#6b7280", fontSize: "14px", marginBottom: "24px" }}>We&apos;ll use these to send you deadline reminders</p>
-              <div style={{ marginBottom: "16px" }}>
-                <label style={{ display: "block", fontSize: "14px", fontWeight: 600, color: "#374151", marginBottom: "6px" }}>Email Address</label>
-                <input
-                  type="email"
-                  placeholder="you@example.com"
-                  value={profile.email}
-                  onChange={(e) => setProfile({ ...profile, email: e.target.value })}
-                  style={{ width: "100%", padding: "12px 16px", borderRadius: "12px", border: onboardErrors.email ? "2px solid #dc2626" : "2px solid #e5e7eb", fontSize: "15px", outline: "none", boxSizing: "border-box" }}
-                />
-                {onboardErrors.email && <p style={{ color: "#dc2626", fontSize: "12px", margin: "4px 0 0" }}>{onboardErrors.email}</p>}
-              </div>
-              <div style={{ marginBottom: "24px" }}>
-                <label style={{ display: "block", fontSize: "14px", fontWeight: 600, color: "#374151", marginBottom: "6px" }}>Phone Number <span style={{ color: "#9ca3af", fontWeight: 400 }}>(optional)</span></label>
-                <input
-                  type="tel"
-                  placeholder="+1 (555) 000-0000"
-                  value={profile.phone}
-                  onChange={(e) => setProfile({ ...profile, phone: e.target.value })}
-                  style={{ width: "100%", padding: "12px 16px", borderRadius: "12px", border: "2px solid #e5e7eb", fontSize: "15px", outline: "none", boxSizing: "border-box" }}
-                />
-              </div>
-              <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: "12px", padding: "12px 16px", marginBottom: "24px" }}>
-                <p style={{ margin: 0, fontSize: "13px", color: "#166534" }}>
-                  📅 You&apos;ll receive reminders at <strong>30, 14, 7, and 1 day</strong> before each deadline
-                </p>
-              </div>
-            </div>
-          )}
-
-          <button
-            onClick={handleOnboardNext}
-            disabled={loading}
-            style={{ width: "100%", padding: "14px", background: loading ? "#9ca3af" : "linear-gradient(135deg, #667eea, #764ba2)", color: "#fff", border: "none", borderRadius: "12px", fontSize: "16px", fontWeight: 700, cursor: loading ? "not-allowed" : "pointer" }}
-          >
-            {loading ? "Setting up..." : onboardStep === 1 ? "Continue →" : "Start Tracking 🚀"}
-          </button>
-          {onboardStep === 2 && (
-            <button onClick={() => setOnboardStep(1)} style={{ width: "100%", padding: "12px", background: "none", border: "none", color: "#6b7280", fontSize: "14px", cursor: "pointer", marginTop: "8px" }}>
-              ← Back
-            </button>
-          )}
-        </div>
-      </div>
-    );
-  }
+  const suggestions = SCHOOL_SUGGESTIONS.filter(s =>
+    s.toLowerCase().includes(form.schoolName.toLowerCase()) && form.schoolName.length > 0
+  ).slice(0, 6);
 
   return (
-    <div style={{ minHeight: "100vh", background: "#f8fafc", fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" }}>
+    <div style={{ minHeight: "100vh", background: "#f8fafc", fontFamily: "'Inter', system-ui, sans-serif" }}>
       {/* Header */}
-      <div style={{ background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)", padding: "16px 20px 0", position: "sticky", top: 0, zIndex: 100, boxShadow: "0 2px 20px rgba(102,126,234,0.4)" }}>
-        <div style={{ maxWidth: "600px", margin: "0 auto" }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "16px" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-              <span style={{ fontSize: "24px" }}>🎓</span>
-              <div>
-                <div style={{ color: "#fff", fontWeight: 800, fontSize: "18px", lineHeight: 1 }}>EduTracker</div>
-                <div style={{ color: "rgba(255,255,255,0.8)", fontSize: "12px" }}>Hi, {profile.name} · Class of {profile.gradYear}</div>
-              </div>
-            </div>
-            <div style={{ background: "rgba(255,255,255,0.2)", borderRadius: "20px", padding: "6px 12px", display: "flex", alignItems: "center", gap: "6px" }}>
-              <span style={{ color: "#fff", fontSize: "13px", fontWeight: 600 }}>{savedColleges.length}</span>
-              <span style={{ color: "rgba(255,255,255,0.8)", fontSize: "12px" }}>saved</span>
-            </div>
-          </div>
-          <div style={{ display: "flex", gap: "4px", paddingBottom: "1px" }}>
-            {(["search", "mycolleges", "reminders"] as Tab[]).map((tab) => (
-              <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                style={{
-                  flex: 1, padding: "10px 4px", background: activeTab === tab ? "#fff" : "transparent",
-                  border: "none", borderRadius: "12px 12px 0 0", cursor: "pointer",
-                  color: activeTab === tab ? "#667eea" : "rgba(255,255,255,0.8)",
-                  fontWeight: activeTab === tab ? 700 : 500, fontSize: "13px",
-                  transition: "all 0.2s",
-                }}
-              >
-                {tab === "search" ? "🔍 Search" : tab === "mycolleges" ? `📚 My List${savedColleges.length > 0 ? ` (${savedColleges.length})` : ""}` : `⏰ Reminders${reminders.length > 0 ? ` (${reminders.length})` : ""}`}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      <div style={{ maxWidth: "600px", margin: "0 auto", padding: "16px" }}>
-        {/* SEARCH TAB */}
-        {activeTab === "search" && (
+      <header style={{
+        background: "linear-gradient(135deg, #1e3a5f 0%, #2563eb 100%)",
+        color: "#fff",
+        padding: "0",
+        boxShadow: "0 2px 12px rgba(0,0,0,0.15)",
+      }}>
+        <div style={{ maxWidth: 1100, margin: "0 auto", padding: "20px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
           <div>
-            <div style={{ background: "#fff", borderRadius: "16px", padding: "16px", marginBottom: "16px", boxShadow: "0 2px 12px rgba(0,0,0,0.06)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ fontSize: 28 }}>🎓</span>
+              <h1 style={{ margin: 0, fontSize: 24, fontWeight: 800, letterSpacing: "-0.5px" }}>Edutracker</h1>
+            </div>
+            <p style={{ margin: "2px 0 0 38px", fontSize: 13, opacity: 0.8 }}>Never miss a college application deadline</p>
+          </div>
+          <button onClick={openAdd} style={{
+            background: "#fff",
+            color: "#2563eb",
+            border: "none",
+            borderRadius: 10,
+            padding: "10px 20px",
+            fontWeight: 700,
+            fontSize: 14,
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
+          }}>
+            <span style={{ fontSize: 18, lineHeight: 1 }}>+</span> Add Application
+          </button>
+        </div>
+
+        {/* Stats bar */}
+        {applications.length > 0 && (
+          <div style={{ borderTop: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.1)" }}>
+            <div style={{ maxWidth: 1100, margin: "0 auto", padding: "12px 24px", display: "flex", gap: 32, flexWrap: "wrap" }}>
+              <Stat label="Total" value={applications.length} />
+              <Stat label="Submitted" value={submittedCount} color="#86efac" />
+              <Stat label="Urgent (≤14d)" value={urgentCount} color={urgentCount > 0 ? "#fca5a5" : "#86efac"} />
+              <Stat label="Remaining" value={applications.length - submittedCount} color="#fde68a" />
+            </div>
+          </div>
+        )}
+      </header>
+
+      <main style={{ maxWidth: 1100, margin: "0 auto", padding: "28px 24px" }}>
+        {applications.length === 0 ? (
+          <EmptyState onAdd={openAdd} />
+        ) : (
+          <>
+            {/* Controls */}
+            <div style={{ display: "flex", gap: 12, marginBottom: 20, flexWrap: "wrap", alignItems: "center" }}>
               <input
                 type="text"
-                placeholder="Search colleges by name or state..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                style={{ width: "100%", padding: "12px 16px", borderRadius: "12px", border: "2px solid #e5e7eb", fontSize: "15px", outline: "none", boxSizing: "border-box", marginBottom: "12px" }}
+                placeholder="🔍  Search schools..."
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                style={{
+                  flex: "1 1 200px",
+                  padding: "9px 14px",
+                  borderRadius: 8,
+                  border: "1.5px solid #e2e8f0",
+                  fontSize: 14,
+                  background: "#fff",
+                  outline: "none",
+                }}
               />
-              <div style={{ display: "flex", gap: "8px", overflowX: "auto", paddingBottom: "4px" }}>
-                <button
-                  onClick={() => setFilterState("all")}
-                  style={{ padding: "6px 14px", borderRadius: "20px", border: "none", background: filterState === "all" ? "#667eea" : "#f3f4f6", color: filterState === "all" ? "#fff" : "#374151", fontWeight: 600, fontSize: "13px", cursor: "pointer", whiteSpace: "nowrap" }}
-                >
-                  All States
-                </button>
-                {states.map((s) => (
-                  <button
-                    key={s}
-                    onClick={() => setFilterState(filterState === s ? "all" : s)}
-                    style={{ padding: "6px 14px", borderRadius: "20px", border: "none", background: filterState === s ? "#667eea" : "#f3f4f6", color: filterState === s ? "#fff" : "#374151", fontWeight: 600, fontSize: "13px", cursor: "pointer", whiteSpace: "nowrap" }}
-                  >
-                    {s}
-                  </button>
-                ))}
-              </div>
+              <select value={filter} onChange={e => setFilter(e.target.value as typeof filter)} style={selectStyle}>
+                <option value="all">All Statuses</option>
+                <option value="Not Started">Not Started</option>
+                <option value="In Progress">In Progress</option>
+                <option value="Submitted">Submitted</option>
+              </select>
+              <select value={sortBy} onChange={e => setSortBy(e.target.value as typeof sortBy)} style={selectStyle}>
+                <option value="deadline">Sort: Deadline</option>
+                <option value="school">Sort: School</option>
+                <option value="status">Sort: Status</option>
+              </select>
             </div>
 
-            <p style={{ color: "#6b7280", fontSize: "13px", marginBottom: "12px" }}>{filteredColleges.length} colleges found</p>
-
-            {filteredColleges.map((college) => {
-              const isExpanded = expandedCollege === college.id;
-              const types = deadlineTypes(college);
-              const addedCount = types.filter((t) => isAdded(college.id, t.type)).length;
-              return (
-                <div key={college.id} style={{ background: "#fff", borderRadius: "16px", marginBottom: "12px", boxShadow: "0 2px 12px rgba(0,0,0,0.06)", overflow: "hidden" }}>
-                  <button
-                    onClick={() => setExpandedCollege(isExpanded ? null : college.id)}
-                    style={{ width: "100%", display: "flex", alignItems: "center", gap: "12px", padding: "16px", background: "none", border: "none", cursor: "pointer", textAlign: "left" }}
-                  >
-                    <div style={{ width: "44px", height: "44px", borderRadius: "12px", background: "linear-gradient(135deg, #667eea20, #764ba220)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "22px", flexShrink: 0 }}>
-                      {college.logo}
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontWeight: 700, color: "#111827", fontSize: "15px", marginBottom: "2px" }}>{college.name}</div>
-                      <div style={{ color: "#6b7280", fontSize: "13px" }}>📍 {college.location}</div>
-                    </div>
-                    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "4px" }}>
-                      {addedCount > 0 && (
-                        <div style={{ background: "#dcfce7", color: "#16a34a", fontSize: "11px", fontWeight: 700, padding: "2px 8px", borderRadius: "10px" }}>
-                          {addedCount} added
-                        </div>
-                      )}
-                      <div style={{ color: "#9ca3af", fontSize: "20px" }}>{isExpanded ? "▲" : "▼"}</div>
-                    </div>
-                  </button>
-                  {isExpanded && (
-                    <div style={{ padding: "0 16px 16px", borderTop: "1px solid #f3f4f6" }}>
-                      <div style={{ display: "grid", gap: "8px", marginTop: "12px" }}>
-                        {types.map(({ type, date }) => {
-                          const days = daysUntil(date);
-                          const added = isAdded(college.id, type);
-                          const urgency = getUrgency(days);
-                          return (
-                            <div key={type} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", borderRadius: "12px", background: added ? "#f0fdf4" : "#f9fafb", border: `1px solid ${added ? "#bbf7d0" : "#e5e7eb"}` }}>
-                              <div>
-                                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                                  <span style={{ fontWeight: 700, fontSize: "13px", color: "#374151" }}>{type}</span>
-                                  {days >= 0 && days <= 90 && (
-                                    <span style={{ fontSize: "11px", fontWeight: 700, color: urgencyColor(urgency), background: urgencyBg(urgency), padding: "2px 6px", borderRadius: "8px" }}>
-                                      {days === 0 ? "Today!" : days === 1 ? "1 day" : `${days}d`}
-                                    </span>
-                                  )}
-                                  {days < 0 && <span style={{ fontSize: "11px", color: "#9ca3af" }}>Passed</span>}
-                                </div>
-                                <div style={{ color: "#6b7280", fontSize: "12px", marginTop: "2px" }}>{formatDate(date)}</div>
-                              </div>
-                              <button
-                                disabled={added || addingCollegeId === `${college.id}_${type}`}
-                                onClick={() => { setAddingCollegeId(`${college.id}_${type}`); addCollege(college, type, date); setTimeout(() => setAddingCollegeId(null), 500); }}
-                                style={{ padding: "8px 14px", borderRadius: "10px", border: "none", background: added ? "#16a34a" : "#667eea", color: "#fff", fontWeight: 700, fontSize: "13px", cursor: added ? "default" : "pointer" }}
-                              >
-                                {added ? "✓ Added" : "+ Add"}
-                              </button>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        {/* MY COLLEGES TAB */}
-        {activeTab === "mycolleges" && (
-          <div>
-            {savedColleges.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "60px 20px" }}>
-                <div style={{ fontSize: "64px", marginBottom: "16px" }}>📚</div>
-                <h3 style={{ color: "#374151", fontSize: "20px", fontWeight: 700, marginBottom: "8px" }}>No colleges yet</h3>
-                <p style={{ color: "#6b7280", marginBottom: "24px" }}>Search and add colleges to track their deadlines</p>
-                <button
-                  onClick={() => setActiveTab("search")}
-                  style={{ padding: "12px 24px", background: "linear-gradient(135deg, #667eea, #764ba2)", color: "#fff", border: "none", borderRadius: "12px", fontWeight: 700, cursor: "pointer", fontSize: "15px" }}
-                >
-                  Search Colleges
-                </button>
+            {filteredAndSorted.length === 0 ? (
+              <div style={{ textAlign: "center", padding: 48, color: "#94a3b8" }}>
+                <div style={{ fontSize: 40 }}>🔍</div>
+                <p style={{ marginTop: 8 }}>No applications match your filters.</p>
               </div>
             ) : (
-              <div>
-                <div style={{ background: "linear-gradient(135deg, #667eea20, #764ba220)", borderRadius: "16px", padding: "16px", marginBottom: "16px", display: "flex", gap: "16px" }}>
-                  <div style={{ flex: 1, textAlign: "center" }}>
-                    <div style={{ fontSize: "28px", fontWeight: 800, color: "#667eea" }}>{savedColleges.length}</div>
-                    <div style={{ fontSize: "12px", color: "#6b7280" }}>Deadlines tracked</div>
-                  </div>
-                  <div style={{ width: "1px", background: "#e5e7eb" }} />
-                  <div style={{ flex: 1, textAlign: "center" }}>
-                    <div style={{ fontSize: "28px", fontWeight: 800, color: "#dc2626" }}>{reminders.filter((r) => r.urgency === "critical").length}</div>
-                    <div style={{ fontSize: "12px", color: "#6b7280" }}>Due ≤ 7 days</div>
-                  </div>
-                  <div style={{ width: "1px", background: "#e5e7eb" }} />
-                  <div style={{ flex: 1, textAlign: "center" }}>
-                    <div style={{ fontSize: "28px", fontWeight: 800, color: "#16a34a" }}>{new Set(savedColleges.map((s) => s.collegeId)).size}</div>
-                    <div style={{ fontSize: "12px", color: "#6b7280" }}>Unique schools</div>
-                  </div>
-                </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                {filteredAndSorted.map(app => {
+                  const days = daysUntil(app.deadline);
+                  const isExpanded = expandedId === app.id;
+                  const isOverdue = days < 0;
+                  const isUrgent = days >= 0 && days <= 7;
+                  const isSoon = days > 7 && days <= 14;
 
-                {savedColleges
-                  .slice()
-                  .sort((a, b) => new Date(a.deadlineDate).getTime() - new Date(b.deadlineDate).getTime())
-                  .map((sc) => {
-                    const days = daysUntil(sc.deadlineDate);
-                    const urgency = getUrgency(days);
-                    return (
-                      <div key={sc.id} style={{ background: "#fff", borderRadius: "16px", padding: "16px", marginBottom: "12px", boxShadow: "0 2px 12px rgba(0,0,0,0.06)", borderLeft: `4px solid ${urgencyColor(urgency)}` }}>
-                        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "12px" }}>
-                          <div style={{ flex: 1 }}>
-                            <div style={{ fontWeight: 700, color: "#111827", fontSize: "15px", marginBottom: "4px" }}>{sc.collegeName}</div>
-                            <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
-                              <span style={{ background: "#f3f4f6", color: "#374151", fontSize: "12px", fontWeight: 700, padding: "3px 8px", borderRadius: "8px" }}>{sc.deadlineType}</span>
-                              <span style={{ color: "#6b7280", fontSize: "13px" }}>{formatDate(sc.deadlineDate)}</span>
+                  let urgencyBorder = "#e2e8f0";
+                  if (app.status !== "Submitted") {
+                    if (isOverdue) urgencyBorder = "#ef4444";
+                    else if (isUrgent) urgencyBorder = "#f97316";
+                    else if (isSoon) urgencyBorder = "#f59e0b";
+                  }
+
+                  return (
+                    <div key={app.id} style={{
+                      background: "#fff",
+                      borderRadius: 12,
+                      border: `1.5px solid ${urgencyBorder}`,
+                      boxShadow: "0 1px 4px rgba(0,0,0,0.06)",
+                      overflow: "hidden",
+                      transition: "box-shadow 0.15s",
+                    }}>
+                      <div
+                        onClick={() => setExpandedId(isExpanded ? null : app.id)}
+                        style={{ padding: "16px 20px", cursor: "pointer", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}
+                      >
+                        {/* School + type */}
+                        <div style={{ flex: 1, minWidth: 200 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <span style={{ fontWeight: 700, fontSize: 16, color: "#1e293b" }}>{app.schoolName}</span>
+                            <span style={{
+                              background: TYPE_COLORS[app.type],
+                              color: "#fff",
+                              borderRadius: 6,
+                              padding: "2px 8px",
+                              fontSize: 11,
+                              fontWeight: 700,
+                              letterSpacing: "0.5px",
+                            }}>{app.type}</span>
+                          </div>
+                          <div style={{ fontSize: 13, color: "#64748b", marginTop: 2 }}>
+                            Due: {formatDate(app.deadline)}
+                          </div>
+                        </div>
+
+                        {/* Countdown */}
+                        <div style={{ textAlign: "center", minWidth: 80 }}>
+                          {app.status === "Submitted" ? (
+                            <span style={{ color: "#10b981", fontWeight: 700, fontSize: 14 }}>✓ Submitted</span>
+                          ) : isOverdue ? (
+                            <span style={{ color: "#ef4444", fontWeight: 700, fontSize: 13 }}>Overdue</span>
+                          ) : (
+                            <>
+                              <div style={{
+                                fontSize: 22,
+                                fontWeight: 800,
+                                color: isUrgent ? "#f97316" : isSoon ? "#f59e0b" : "#2563eb",
+                              }}>{days}</div>
+                              <div style={{ fontSize: 11, color: "#94a3b8", fontWeight: 600 }}>DAYS LEFT</div>
+                            </>
+                          )}
+                        </div>
+
+                        {/* Status badge */}
+                        <div>
+                          <span style={{
+                            background: STATUS_COLORS[app.status] + "22",
+                            color: STATUS_COLORS[app.status],
+                            borderRadius: 8,
+                            padding: "4px 12px",
+                            fontSize: 12,
+                            fontWeight: 700,
+                            border: `1px solid ${STATUS_COLORS[app.status]}44`,
+                          }}>{app.status}</span>
+                        </div>
+
+                        <span style={{ color: "#cbd5e1", fontSize: 18, marginLeft: 4 }}>{isExpanded ? "▲" : "▼"}</span>
+                      </div>
+
+                      {/* Expanded detail */}
+                      {isExpanded && (
+                        <div style={{ borderTop: "1px solid #f1f5f9", padding: "14px 20px", background: "#f8fafc" }}>
+                          {app.notes && (
+                            <div style={{ marginBottom: 12 }}>
+                              <span style={{ fontSize: 12, fontWeight: 600, color: "#64748b", textTransform: "uppercase" }}>Notes</span>
+                              <p style={{ margin: "4px 0 0", fontSize: 14, color: "#374151", lineHeight: 1.5 }}>{app.notes}</p>
                             </div>
-                            <div style={{ marginTop: "8px" }}>
-                              {days < 0 ? (
-                                <span style={{ fontSize: "12px", color: "#9ca3af" }}>✓ Deadline passed</span>
-                              ) : days === 0 ? (
-                                <span style={{ fontSize: "13px", fontWeight: 700, color: "#dc2626" }}>🚨 Due TODAY!</span>
+                          )}
+                          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                            {/* Quick status change */}
+                            <div style={{ flex: 1, minWidth: 180 }}>
+                              <span style={{ fontSize: 12, fontWeight: 600, color: "#64748b", textTransform: "uppercase" }}>Quick Update Status</span>
+                              <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
+                                {(["Not Started", "In Progress", "Submitted"] as Application["status"][]).map(s => (
+                                  <button
+                                    key={s}
+                                    onClick={(e) => { e.stopPropagation(); setApplications(prev => prev.map(a => a.id === app.id ? { ...a, status: s } : a)); }}
+                                    style={{
+                                      padding: "5px 10px",
+                                      borderRadius: 6,
+                                      border: `1.5px solid ${STATUS_COLORS[s]}`,
+                                      background: app.status === s ? STATUS_COLORS[s] : "transparent",
+                                      color: app.status === s ? "#fff" : STATUS_COLORS[s],
+                                      fontSize: 12,
+                                      fontWeight: 600,
+                                      cursor: "pointer",
+                                    }}
+                                  >{s}</button>
+                                ))}
+                              </div>
+                            </div>
+
+                            <div style={{ display: "flex", gap: 8, alignItems: "flex-end", marginLeft: "auto" }}>
+                              <button
+                                onClick={(e) => { e.stopPropagation(); openEdit(app); }}
+                                style={{ padding: "7px 16px", borderRadius: 8, border: "1.5px solid #2563eb", background: "#eff6ff", color: "#2563eb", fontSize: 13, fontWeight: 600, cursor: "pointer" }}
+                              >✏️ Edit</button>
+                              {deleteConfirmId === app.id ? (
+                                <>
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); handleDelete(app.id); }}
+                                    style={{ padding: "7px 16px", borderRadius: 8, border: "none", background: "#ef4444", color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer" }}
+                                  >Confirm Delete</button>
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); setDeleteConfirmId(null); }}
+                                    style={{ padding: "7px 16px", borderRadius: 8, border: "1.5px solid #e2e8f0", background: "#fff", color: "#64748b", fontSize: 13, fontWeight: 600, cursor: "pointer" }}
+                                  >Cancel</button>
+                                </>
                               ) : (
-                                <span style={{ fontSize: "13px", fontWeight: 600, color: urgencyColor(urgency) }}>
-                                  {urgency === "critical" ? "🚨" : urgency === "urgent" ? "⚠️" : urgency === "moderate" ? "📅" : "📆"} {days} day{days !== 1 ? "s" : ""} left
-                                </span>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); setDeleteConfirmId(app.id); }}
+                                  style={{ padding: "7px 16px", borderRadius: 8, border: "1.5px solid #fca5a5", background: "#fef2f2", color: "#ef4444", fontSize: 13, fontWeight: 600, cursor: "pointer" }}
+                                >🗑️ Delete</button>
                               )}
                             </div>
-                            <div style={{ marginTop: "8px", display: "flex", gap: "4px", flexWrap: "wrap" }}>
-                              {sc.reminders.map((r) => (
-                                <span key={r} style={{ fontSize: "11px", background: "#ede9fe", color: "#7c3aed", padding: "2px 7px", borderRadius: "8px" }}>
-                                  🔔 {r}d
-                                </span>
-                              ))}
-                            </div>
                           </div>
-                          <button
-                            onClick={() => removeCollege(sc.id)}
-                            style={{ padding: "8px", background: "#fef2f2", border: "none", borderRadius: "10px", cursor: "pointer", color: "#dc2626", fontSize: "16px" }}
-                          >
-                            🗑️
-                          </button>
                         </div>
-                      </div>
-                    );
-                  })}
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
-          </div>
+          </>
         )}
+      </main>
 
-        {/* REMINDERS TAB */}
-        {activeTab === "reminders" && (
-          <div>
-            <div style={{ background: "#fff", borderRadius: "16px", padding: "16px", marginBottom: "16px", boxShadow: "0 2px 12px rgba(0,0,0,0.06)" }}>
-              <h3 style={{ margin: "0 0 4px", fontWeight: 700, color: "#111827" }}>📧 How Reminders Work</h3>
-              <p style={{ color: "#6b7280", fontSize: "13px", margin: "0 0 12px" }}>
-                Reminders are automatically scheduled to {profile.email}{profile.phone ? ` and ${profile.phone}` : ""} at:
-              </p>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
-                {[
-                  { days: "30 days", icon: "📆", label: "Early heads-up" },
-                  { days: "14 days", icon: "📅", label: "Two weeks out" },
-                  { days: "7 days", icon: "⚠️", label: "One week warning" },
-                  { days: "1 day", icon: "🚨", label: "Final reminder" },
-                ].map((r) => (
-                  <div key={r.days} style={{ background: "#f9fafb", borderRadius: "12px", padding: "12px", display: "flex", gap: "8px", alignItems: "center" }}>
-                    <span style={{ fontSize: "20px" }}>{r.icon}</span>
-                    <div>
-                      <div style={{ fontWeight: 700, fontSize: "13px", color: "#111827" }}>{r.days} before</div>
-                      <div style={{ fontSize: "11px", color: "#6b7280" }}>{r.label}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
+      {/* Modal */}
+      {showModal && (
+        <div
+          onClick={closeModal}
+          style={{
+            position: "fixed", inset: 0, background: "rgba(15,23,42,0.5)", display: "flex",
+            alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 16,
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: "#fff", borderRadius: 16, padding: 28, width: "100%", maxWidth: 480,
+              boxShadow: "0 20px 60px rgba(0,0,0,0.2)", maxHeight: "90vh", overflowY: "auto",
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+              <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: "#1e293b" }}>
+                {editingId ? "Edit Application" : "Add Application"}
+              </h2>
+              <button onClick={closeModal} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "#94a3b8", lineHeight: 1 }}>×</button>
             </div>
 
-            {reminders.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "48px 20px" }}>
-                <div style={{ fontSize: "64px", marginBottom: "16px" }}>⏰</div>
-                <h3 style={{ color: "#374151", fontWeight: 700, marginBottom: "8px" }}>No upcoming reminders</h3>
-                <p style={{ color: "#6b7280", marginBottom: "24px" }}>Add colleges to your list to see upcoming deadline reminders</p>
-                <button
-                  onClick={() => setActiveTab("search")}
-                  style={{ padding: "12px 24px", background: "linear-gradient(135deg, #667eea, #764ba2)", color: "#fff", border: "none", borderRadius: "12px", fontWeight: 700, cursor: "pointer" }}
-                >
-                  Find Colleges
-                </button>
-              </div>
-            ) : (
-              <div>
-                <p style={{ color: "#6b7280", fontSize: "13px", marginBottom: "12px" }}>
-                  {reminders.length} deadline{reminders.length !== 1 ? "s" : ""} in the next 90 days
-                </p>
-                {reminders.map((r) => (
-                  <div
-                    key={r.id}
-                    style={{ background: urgencyBg(r.urgency), border: `1px solid ${urgencyColor(r.urgency)}30`, borderRadius: "16px", padding: "16px", marginBottom: "10px", display: "flex", gap: "12px", alignItems: "center" }}
-                  >
-                    <div style={{ width: "48px", height: "48px", borderRadius: "12px", background: urgencyColor(r.urgency), display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                      <div style={{ color: "#fff", fontWeight: 800, fontSize: "16px", lineHeight: 1 }}>{r.daysLeft}</div>
-                      <div style={{ color: "rgba(255,255,255,0.8)", fontSize: "9px", lineHeight: 1 }}>days</div>
-                    </div>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontWeight: 700, color: "#111827", fontSize: "14px" }}>{r.collegeName}</div>
-                      <div style={{ display: "flex", gap: "6px", alignItems: "center", marginTop: "3px" }}>
-                        <span style={{ background: "rgba(0,0,0,0.08)", fontSize: "11px", fontWeight: 700, padding: "2px 7px", borderRadius: "8px", color: "#374151" }}>{r.deadlineType}</span>
-                        <span style={{ fontSize: "12px", color: "#6b7280" }}>{formatDate(r.deadlineDate)}</span>
-                      </div>
-                      <div style={{ marginTop: "6px", display: "flex", gap: "4px" }}>
-                        {[30, 14, 7, 1].filter((d) => d >= r.daysLeft).map((d) => (
-                          <span key={d} style={{ fontSize: "10px", background: urgencyColor(r.urgency) + "20", color: urgencyColor(r.urgency), padding: "2px 6px", borderRadius: "8px", fontWeight: 600 }}>
-                            🔔 {d}d ✓
-                          </span>
-                        ))}
-                        {[30, 14, 7, 1].filter((d) => d < r.daysLeft).map((d) => (
-                          <span key={d} style={{ fontSize: "10px", background: "#f3f4f6", color: "#9ca3af", padding: "2px 6px", borderRadius: "8px" }}>
-                            🔔 {d}d
-                          </span>
-                        ))}
-                      </div>
-                    </div>
+            <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              {/* School Name */}
+              <div style={{ position: "relative" }}>
+                <label style={labelStyle}>School Name *</label>
+                <input
+                  type="text"
+                  value={form.schoolName}
+                  onChange={e => { setForm(f => ({ ...f, schoolName: e.target.value })); setShowSuggestions(true); }}
+                  onFocus={() => setShowSuggestions(true)}
+                  placeholder="e.g. Harvard University"
+                  required
+                  style={inputStyle}
+                />
+                {showSuggestions && suggestions.length > 0 && (
+                  <div style={{
+                    position: "absolute", top: "100%", left: 0, right: 0, background: "#fff",
+                    border: "1.5px solid #e2e8f0", borderRadius: 8, boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
+                    zIndex: 10, marginTop: 2, overflow: "hidden",
+                  }}>
+                    {suggestions.map(s => (
+                      <div
+                        key={s}
+                        onClick={() => { setForm(f => ({ ...f, schoolName: s })); setShowSuggestions(false); }}
+                        style={{ padding: "9px 14px", cursor: "pointer", fontSize: 14, color: "#374151" }}
+                        onMouseEnter={e => (e.currentTarget.style.background = "#f1f5f9")}
+                        onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+                      >{s}</div>
+                    ))}
                   </div>
-                ))}
+                )}
               </div>
-            )}
-          </div>
-        )}
-      </div>
 
-      {/* Toast */}
-      {toast && (
-        <div style={{ position: "fixed", bottom: "24px", left: "50%", transform: "translateX(-50%)", background: "#1e1b4b", color: "#fff", padding: "12px 24px", borderRadius: "100px", fontSize: "14px", fontWeight: 600, boxShadow: "0 8px 32px rgba(0,0,0,0.3)", zIndex: 9999, whiteSpace: "nowrap" }}>
-          {toast}
+              {/* Deadline */}
+              <div>
+                <label style={labelStyle}>Application Deadline *</label>
+                <input
+                  type="date"
+                  value={form.deadline}
+                  onChange={e => setForm(f => ({ ...f, deadline: e.target.value }))}
+                  required
+                  style={inputStyle}
+                />
+              </div>
+
+              {/* Type */}
+              <div>
+                <label style={labelStyle}>Application Type</label>
+                <select value={form.type} onChange={e => setForm(f => ({ ...f, type: e.target.value as Application["type"] }))} style={inputStyle}>
+                  <option value="RD">Regular Decision (RD)</option>
+                  <option value="EA">Early Action (EA)</option>
+                  <option value="ED">Early Decision (ED)</option>
+                  <option value="ED2">Early Decision II (ED2)</option>
+                  <option value="Rolling">Rolling Admission</option>
+                </select>
+              </div>
+
+              {/* Status */}
+              <div>
+                <label style={labelStyle}>Status</label>
+                <select value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value as Application["status"] }))} style={inputStyle}>
+                  <option value="Not Started">Not Started</option>
+                  <option value="In Progress">In Progress</option>
+                  <option value="Submitted">Submitted</option>
+                </select>
+              </div>
+
+              {/* Notes */}
+              <div>
+                <label style={labelStyle}>Notes (optional)</label>
+                <textarea
+                  value={form.notes}
+                  onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
+                  placeholder="Essay requirements, portal login info, etc."
+                  rows={3}
+                  style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
+                />
+              </div>
+
+              <div style={{ display: "flex", gap: 10, marginTop: 4 }}>
+                <button type="button" onClick={closeModal} style={{
+                  flex: 1, padding: "11px", borderRadius: 10, border: "1.5px solid #e2e8f0",
+                  background: "#fff", color: "#64748b", fontSize: 14, fontWeight: 600, cursor: "pointer",
+                }}>Cancel</button>
+                <button type="submit" style={{
+                  flex: 2, padding: "11px", borderRadius: 10, border: "none",
+                  background: "linear-gradient(135deg, #1e3a5f, #2563eb)", color: "#fff",
+                  fontSize: 14, fontWeight: 700, cursor: "pointer",
+                }}>{editingId ? "Save Changes" : "Add Application"}</button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
     </div>
   );
 }
+
+function Stat({ label, value, color = "#fff" }: { label: string; value: number; color?: string }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <span style={{ fontSize: 20, fontWeight: 800, color }}>{value}</span>
+      <span style={{ fontSize: 12, color: "rgba(255,255,255,0.65)", fontWeight: 500 }}>{label}</span>
+    </div>
+  );
+}
+
+function EmptyState({ onAdd }: { onAdd: () => void }) {
+  return (
+    <div style={{ textAlign: "center", padding: "64px 24px" }}>
+      <div style={{ fontSize: 64, marginBottom: 16 }}>📋</div>
+      <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: "#1e293b" }}>No applications yet</h2>
+      <p style={{ color: "#64748b", marginTop: 8, marginBottom: 28, fontSize: 15, maxWidth: 380, margin: "8px auto 28px" }}>
+        Start tracking your college applications so you never miss an important deadline.
+      </p>
+      <button onClick={onAdd} style={{
+        background: "linear-gradient(135deg, #1e3a5f, #2563eb)",
+        color: "#fff", border: "none", borderRadius: 12,
+        padding: "13px 28px", fontWeight: 700, fontSize: 15, cursor: "pointer",
+        boxShadow: "0 4px 14px rgba(37,99,235,0.35)",
+      }}>
+        + Add Your First Application
+      </button>
+
+      {/* Demo prompt */}
+      <div style={{ marginTop: 48, padding: "20px 24px", background: "#fff", borderRadius: 12, border: "1.5px solid #e2e8f0", maxWidth: 480, margin: "48px auto 0" }}>
+        <p style={{ margin: 0, fontSize: 13, color: "#64748b", fontWeight: 600 }}>💡 Track key deadlines like:</p>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10, justifyContent: "center" }}>
+          {["Early Action (Nov 1)", "Early Decision (Nov 1)", "Regular Decision (Jan 1)", "Rolling Admissions"].map(t => (
+            <span key={t} style={{ background: "#f1f5f9", color: "#475569", borderRadius: 6, padding: "4px 10px", fontSize: 12, fontWeight: 500 }}>{t}</span>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const inputStyle: React.CSSProperties = {
+  width: "100%",
+  padding: "10px 14px",
+  borderRadius: 8,
+  border: "1.5px solid #e2e8f0",
+  fontSize: 14,
+  color: "#1e293b",
+  background: "#fff",
+  outline: "none",
+  boxSizing: "border-box",
+  fontFamily: "inherit",
+};
+
+const labelStyle: React.CSSProperties = {
+  display: "block",
+  fontSize: 13,
+  fontWeight: 600,
+  color: "#374151",
+  marginBottom: 6,
+};
+
+const selectStyle: React.CSSProperties = {
+  padding: "9px 12px",
+  borderRadius: 8,
+  border: "1.5px solid #e2e8f0",
+  fontSize: 13,
+  background: "#fff",
+  color: "#374151",
+  cursor: "pointer",
+  outline: "none",
+};
