@@ -1,130 +1,69 @@
 import { NextRequest, NextResponse } from "next/server";
-import { q, hasDb } from "@/lib/db";
-import { COLLEGES } from "@/lib/colleges";
+import { q, P, ensure } from "@/lib/db";
 
-interface ReminderPayload {
-  email: string;
-  phone?: string;
-  reminders: number[];
-  schools: { collegeId: string; deadlineTypes: string[] }[];
-}
+const REMINDER_DAYS = [30, 14, 7, 1];
 
-export async function POST(req: NextRequest) {
+export async function GET(req: NextRequest) {
+  // Simple auth check for cron endpoint
+  const authHeader = req.headers.get("x-cron-secret");
+  const cronSecret = process.env.CRON_SECRET;
+  if (cronSecret && authHeader !== cronSecret) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   try {
-    const body: ReminderPayload = await req.json();
-    const { email, phone, reminders, schools } = body;
+    await ensure();
 
-    if (!email || !schools || schools.length === 0) {
-      return NextResponse.json({ ok: false, error: "Missing required fields" }, { status: 400 });
-    }
+    const due: { email: string; college_name: string; deadline_type: string; deadline_date: string; deadline_id: number; days_before: number; phone: string; notify_email: boolean; notify_sms: boolean }[] = [];
 
-    if (!hasDb()) {
-      // No DB — just acknowledge
-      return NextResponse.json({ ok: true, message: "Reminders noted (no DB configured)" });
-    }
-
-    const prefix = process.env.APP_TABLE_PREFIX ?? "edutracker";
-    const settingsTable = `${prefix}_reminder_settings`;
-    const deadlinesTable = `${prefix}_user_deadlines`;
-
-    // Create tables if they don't exist
-    await q(
-      `CREATE TABLE IF NOT EXISTS ${settingsTable} (
-        id SERIAL PRIMARY KEY,
-        email TEXT NOT NULL,
-        phone TEXT,
-        reminder_days INTEGER[],
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW()
-      )`,
-      []
-    );
-
-    await q(
-      `CREATE TABLE IF NOT EXISTS ${deadlinesTable} (
-        id SERIAL PRIMARY KEY,
-        email TEXT NOT NULL,
-        college_id TEXT NOT NULL,
-        college_name TEXT NOT NULL,
-        deadline_type TEXT NOT NULL,
-        deadline_date DATE NOT NULL,
-        created_at TIMESTAMPTZ DEFAULT NOW()
-      )`,
-      []
-    );
-
-    // Upsert reminder settings
-    const existing = await q(
-      `SELECT id FROM ${settingsTable} WHERE email = $1`,
-      [email]
-    );
-
-    if (existing.rows.length > 0) {
-      await q(
-        `UPDATE ${settingsTable} SET phone = $1, reminder_days = $2, updated_at = NOW() WHERE email = $3`,
-        [phone ?? null, reminders, email]
+    for (const daysBefore of REMINDER_DAYS) {
+      const rows = await q(
+        `SELECT d.id as deadline_id, d.email, d.college_name, d.deadline_type, d.deadline_date::text,
+                p.phone, p.notify_email, p.notify_sms
+         FROM ${P}deadlines d
+         LEFT JOIN ${P}profiles p ON p.email = d.email
+         WHERE d.deadline_date = CURRENT_DATE + INTERVAL '${daysBefore} days'
+           AND NOT EXISTS (
+             SELECT 1 FROM ${P}reminders_sent rs
+             WHERE rs.email = d.email AND rs.deadline_id = d.id AND rs.days_before = $1
+           )`,
+        [daysBefore]
       );
-    } else {
-      await q(
-        `INSERT INTO ${settingsTable} (email, phone, reminder_days) VALUES ($1, $2, $3)`,
-        [email, phone ?? null, reminders]
-      );
-    }
-
-    // Replace user deadlines
-    await q(`DELETE FROM ${deadlinesTable} WHERE email = $1`, [email]);
-
-    for (const sel of schools) {
-      const college = COLLEGES.find((c) => c.id === sel.collegeId);
-      if (!college) continue;
-      for (const dt of sel.deadlineTypes) {
-        const deadlineTypes = ["ED1", "ED2", "EA", "RD"] as const;
-        type DeadlineType = typeof deadlineTypes[number];
-        const dateStr = college.deadlines[dt as DeadlineType];
-        if (!dateStr) continue;
-        await q(
-          `INSERT INTO ${deadlinesTable} (email, college_id, college_name, deadline_type, deadline_date)
-           VALUES ($1, $2, $3, $4, $5)`,
-          [email, college.id, college.name, dt, dateStr]
-        );
+      for (const row of rows) {
+        due.push({
+          email: row.email as string,
+          college_name: row.college_name as string,
+          deadline_type: row.deadline_type as string,
+          deadline_date: row.deadline_date as string,
+          deadline_id: row.deadline_id as number,
+          days_before: daysBefore,
+          phone: row.phone as string,
+          notify_email: (row.notify_email ?? true) as boolean,
+          notify_sms: (row.notify_sms ?? false) as boolean,
+        });
       }
     }
 
-    return NextResponse.json({ ok: true, message: "Reminders saved successfully" });
-  } catch (err) {
-    console.error("Reminders API error:", err);
-    return NextResponse.json({ ok: false, error: "Server error" }, { status: 500 });
-  }
-}
-
-export async function GET(req: NextRequest) {
-  const { searchParams } = new URL(req.url);
-  const email = searchParams.get("email");
-
-  if (!email) {
-    return NextResponse.json({ error: "email required" }, { status: 400 });
-  }
-
-  if (!hasDb()) {
-    return NextResponse.json({ settings: null, deadlines: [] });
-  }
-
-  const prefix = process.env.APP_TABLE_PREFIX ?? "edutracker";
-  const settingsTable = `${prefix}_reminder_settings`;
-  const deadlinesTable = `${prefix}_user_deadlines`;
-
-  try {
-    const settings = await q(`SELECT * FROM ${settingsTable} WHERE email = $1`, [email]);
-    const deadlines = await q(
-      `SELECT * FROM ${deadlinesTable} WHERE email = $1 ORDER BY deadline_date ASC`,
-      [email]
-    );
+    // Mark as sent (in production you'd call an email/SMS API here)
+    for (const reminder of due) {
+      await q(
+        `INSERT INTO ${P}reminders_sent (email, deadline_id, days_before) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+        [reminder.email, reminder.deadline_id, reminder.days_before]
+      );
+    }
 
     return NextResponse.json({
-      settings: settings.rows[0] ?? null,
-      deadlines: deadlines.rows,
+      processed: due.length,
+      reminders: due.map(r => ({
+        email: r.email,
+        college: r.college_name,
+        type: r.deadline_type,
+        date: r.deadline_date,
+        days_before: r.days_before,
+        channels: [r.notify_email && "email", r.notify_sms && r.phone && "sms"].filter(Boolean),
+      })),
     });
-  } catch {
-    return NextResponse.json({ settings: null, deadlines: [] });
+  } catch (e) {
+    return NextResponse.json({ error: String(e) }, { status: 500 });
   }
 }
