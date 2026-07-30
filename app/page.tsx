@@ -1,205 +1,113 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
+
+interface College {
+  id: string;
+  name: string;
+  location: string;
+  type: string;
+  deadlines: Deadline[];
+}
+
+interface Deadline {
+  type: "EA" | "ED" | "ED2" | "RD" | "Scholarship";
+  label: string;
+  date: string; // YYYY-MM-DD
+  notes?: string;
+}
+
+interface UserDeadline {
+  collegeId: string;
+  collegeName: string;
+  deadlineType: string;
+  deadlineLabel: string;
+  date: string;
+  notes?: string;
+  daysUntil: number;
+  alertPrefs: AlertPrefs;
+}
+
+interface AlertPrefs {
+  email30: boolean;
+  email7: boolean;
+  email1: boolean;
+  sms30: boolean;
+  sms7: boolean;
+  sms1: boolean;
+}
+
+const defaultAlertPrefs: AlertPrefs = {
+  email30: true,
+  email7: true,
+  email1: true,
+  sms30: false,
+  sms7: false,
+  sms1: false,
+};
+
 import { COLLEGES } from "@/lib/colleges";
-import { getUrgency, getDeadlineTypeBadge } from "@/lib/urgency";
-import type { College, Deadline, DeadlineType } from "@/lib/types";
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+type View = "auth" | "onboarding" | "dashboard" | "alerts" | "profile";
 
-type View = "auth" | "onboarding" | "dashboard" | "add-deadline" | "manage";
-type AuthMode = "login" | "signup";
-
-interface AuthState {
-  email: string;
-  loggedIn: boolean;
+function daysUntil(dateStr: string): number {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const target = new Date(dateStr + "T00:00:00");
+  const diff = target.getTime() - today.getTime();
+  return Math.ceil(diff / (1000 * 60 * 60 * 24));
 }
 
-// ─── Storage helpers ──────────────────────────────────────────────────────────
+function formatDate(dateStr: string): string {
+  const d = new Date(dateStr + "T00:00:00");
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
 
-function lsGet<T>(key: string, fallback: T): T {
-  if (typeof window === "undefined") return fallback;
-  try {
-    const v = localStorage.getItem(key);
-    return v ? (JSON.parse(v) as T) : fallback;
-  } catch {
-    return fallback;
+function urgencyColor(days: number): string {
+  if (days < 0) return "#9ca3af";
+  if (days <= 1) return "#ef4444";
+  if (days <= 7) return "#f97316";
+  if (days <= 30) return "#eab308";
+  return "#22c55e";
+}
+
+function urgencyBg(days: number): string {
+  if (days < 0) return "#f3f4f6";
+  if (days <= 1) return "#fef2f2";
+  if (days <= 7) return "#fff7ed";
+  if (days <= 30) return "#fefce8";
+  return "#f0fdf4";
+}
+
+function deadlineTypeBadgeColor(type: string): { bg: string; text: string } {
+  switch (type) {
+    case "EA": return { bg: "#dbeafe", text: "#1d4ed8" };
+    case "ED": return { bg: "#ede9fe", text: "#7c3aed" };
+    case "ED2": return { bg: "#f3e8ff", text: "#9333ea" };
+    case "RD": return { bg: "#dcfce7", text: "#15803d" };
+    case "Scholarship": return { bg: "#fef9c3", text: "#a16207" };
+    default: return { bg: "#f3f4f6", text: "#374151" };
   }
 }
 
-function lsSet(key: string, value: unknown) {
-  if (typeof window === "undefined") return;
-  try {
-    localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    // ignore
-  }
-}
-
-// ─── API helpers ──────────────────────────────────────────────────────────────
-
-async function apiPost(body: Record<string, unknown>) {
-  const r = await fetch("/api/deadlines", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  return r.json();
-}
-
-// ─── Sub-components ───────────────────────────────────────────────────────────
-
-function Logo() {
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-      <div style={{
-        width: 36, height: 36, borderRadius: 10,
-        background: "linear-gradient(135deg, #6366f1, #8b5cf6)",
-        display: "flex", alignItems: "center", justifyContent: "center",
-        fontSize: 18, color: "#fff", fontWeight: 700, flexShrink: 0,
-      }}>E</div>
-      <span style={{ fontWeight: 800, fontSize: 20, color: "#1e293b", letterSpacing: "-0.5px" }}>
-        Edu<span style={{ color: "#6366f1" }}>tracker</span>
-      </span>
-    </div>
-  );
-}
-
-function CollegeSearch({
-  value,
-  onChange,
-  onSelect,
-  placeholder,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  onSelect: (name: string, location: string) => void;
-  placeholder?: string;
-}) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  const filtered = value.length >= 2
-    ? COLLEGES.filter(c =>
-        c.name.toLowerCase().includes(value.toLowerCase()) ||
-        c.location.toLowerCase().includes(value.toLowerCase())
-      ).slice(0, 8)
-    : [];
-
-  useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    }
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, []);
-
-  return (
-    <div ref={ref} style={{ position: "relative" }}>
-      <input
-        type="text"
-        value={value}
-        onChange={e => { onChange(e.target.value); setOpen(true); }}
-        onFocus={() => setOpen(true)}
-        placeholder={placeholder ?? "Search colleges…"}
-        style={{
-          width: "100%", padding: "10px 14px", borderRadius: 10,
-          border: "1.5px solid #e2e8f0", fontSize: 15, outline: "none",
-          background: "#fff",
-          transition: "border-color 0.15s",
-        }}
-        onMouseOver={e => (e.currentTarget.style.borderColor = "#6366f1")}
-        onMouseOut={e => (e.currentTarget.style.borderColor = "#e2e8f0")}
-      />
-      {open && filtered.length > 0 && (
-        <div style={{
-          position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0,
-          background: "#fff", border: "1.5px solid #e2e8f0", borderRadius: 10,
-          zIndex: 100, maxHeight: 280, overflowY: "auto",
-          boxShadow: "0 8px 24px rgba(0,0,0,0.10)",
-        }}>
-          {filtered.map(c => (
-            <button
-              key={c.name}
-              type="button"
-              onClick={() => { onSelect(c.name, c.location); setOpen(false); }}
-              style={{
-                width: "100%", textAlign: "left", padding: "10px 14px",
-                background: "none", border: "none", cursor: "pointer",
-                borderBottom: "1px solid #f1f5f9",
-                transition: "background 0.1s",
-              }}
-              onMouseOver={e => (e.currentTarget.style.background = "#f8fafc")}
-              onMouseOut={e => (e.currentTarget.style.background = "none")}
-            >
-              <div style={{ fontWeight: 600, fontSize: 14, color: "#1e293b" }}>{c.name}</div>
-              <div style={{ fontSize: 12, color: "#64748b" }}>{c.location} · {c.type}</div>
-            </button>
-          ))}
-          {value.length >= 2 && (
-            <button
-              type="button"
-              onClick={() => { onSelect(value, ""); setOpen(false); }}
-              style={{
-                width: "100%", textAlign: "left", padding: "10px 14px",
-                background: "none", border: "none", cursor: "pointer",
-                color: "#6366f1", fontSize: 14, fontWeight: 600,
-              }}
-              onMouseOver={e => (e.currentTarget.style.background = "#f8fafc")}
-              onMouseOut={e => (e.currentTarget.style.background = "none")}
-            >
-              + Add "{value}" manually
-            </button>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── Main Component ───────────────────────────────────────────────────────────
-
-export default function Home() {
-  const [auth, setAuth] = useState<AuthState>({ email: "", loggedIn: false });
-  const [authMode, setAuthMode] = useState<AuthMode>("login");
-  const [authEmail, setAuthEmail] = useState("");
-  const [authPassword, setAuthPassword] = useState("");
+export default function App() {
+  const [view, setView] = useState<View>("auth");
+  const [authMode, setAuthMode] = useState<"login" | "signup">("login");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [phone, setPhone] = useState("");
   const [authError, setAuthError] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
 
-  const [view, setView] = useState<View>("auth");
-  const [colleges, setColleges] = useState<College[]>([]);
-  const [deadlines, setDeadlines] = useState<Deadline[]>([]);
-  const [dataLoaded, setDataLoaded] = useState(false);
+  const [selectedColleges, setSelectedColleges] = useState<string[]>([]);
+  const [alertPrefsMap, setAlertPrefsMap] = useState<Record<string, AlertPrefs>>({});
+  const [searchQuery, setSearchQuery] = useState("");
+  const [filterType, setFilterType] = useState<string>("All");
+  const [onboardingStep, setOnboardingStep] = useState(0);
 
-  // Onboarding
-  const [onboardStep, setOnboardStep] = useState(0);
-  const [onboardColleges, setOnboardColleges] = useState<Array<{ name: string; location: string }>>([]);
-  const [onboardSearch, setOnboardSearch] = useState("");
-  const [onboardLoading, setOnboardLoading] = useState(false);
-
-  // Add deadline modal
-  const [showAddDeadline, setShowAddDeadline] = useState(false);
-  const [dlCollege, setDlCollege] = useState<College | null>(null);
-  const [dlType, setDlType] = useState<DeadlineType>("RD");
-  const [dlDate, setDlDate] = useState("");
-  const [dlNotes, setDlNotes] = useState("");
-  const [dlError, setDlError] = useState("");
-
-  // Add college modal (from dashboard)
-  const [showAddCollege, setShowAddCollege] = useState(false);
-  const [addSearch, setAddSearch] = useState("");
-  const [addCollegeName, setAddCollegeName] = useState("");
-  const [addCollegeLocation, setAddCollegeLocation] = useState("");
-
-  // Manage tab
-  const [manageTab, setManageTab] = useState<"list" | "colleges">("list");
-
-  // Filter
-  const [filterType, setFilterType] = useState<"all" | DeadlineType>("all");
-  const [showPast, setShowPast] = useState(false);
-
-  // ── Init ──────────────────────────────────────────────────────────────────
+  const [activeTab, setActiveTab] = useState<"upcoming" | "past">("upcoming");
+  const [dashboardFilter, setDashboardFilter] = useState<string>("All");
 
   useEffect(() => {
     fetch("/api/track", {
@@ -207,1120 +115,712 @@ export default function Home() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ path: window.location.pathname }),
     }).catch(() => {});
-
-    const saved = lsGet<{ email: string } | null>("et_auth", null);
-    if (saved?.email) {
-      setAuth({ email: saved.email, loggedIn: true });
-      loadData(saved.email);
-    }
   }, []);
 
-  // ── Data Loading ──────────────────────────────────────────────────────────
-
-  const loadData = useCallback(async (email: string) => {
-    // Load from localStorage first (fast)
-    const lsColleges = lsGet<College[]>(`et_colleges_${email}`, []);
-    const lsDeadlines = lsGet<Deadline[]>(`et_deadlines_${email}`, []);
-    if (lsColleges.length > 0 || lsDeadlines.length > 0) {
-      setColleges(lsColleges);
-      setDeadlines(lsDeadlines);
-      setDataLoaded(true);
-      setView(lsColleges.length === 0 ? "onboarding" : "dashboard");
-    }
-
-    // Then sync with DB
-    try {
-      const r = await fetch(`/api/deadlines?email=${encodeURIComponent(email)}`);
-      const data = await r.json();
-      if (data.colleges && data.deadlines) {
-        const dbColleges: College[] = data.colleges.map((c: Record<string, unknown>) => ({
-          id: String(c.id),
-          name: String(c.college_name),
-          location: String(c.location ?? ""),
-        }));
-        const dbDeadlines: Deadline[] = data.deadlines.map((d: Record<string, unknown>) => ({
-          id: String(d.id),
-          collegeId: String(d.college_id),
-          collegeName: String(d.college_name),
-          collegeLocation: dbColleges.find(c => c.id === String(d.college_id))?.location ?? "",
-          type: d.deadline_type as DeadlineType,
-          date: typeof d.deadline_date === "string" ? d.deadline_date.slice(0, 10) : "",
-          notes: String(d.notes ?? ""),
-        }));
-        setColleges(dbColleges);
-        setDeadlines(dbDeadlines);
-        lsSet(`et_colleges_${email}`, dbColleges);
-        lsSet(`et_deadlines_${email}`, dbDeadlines);
-        setDataLoaded(true);
-        setView(dbColleges.length === 0 ? "onboarding" : "dashboard");
+  useEffect(() => {
+    const stored = localStorage.getItem("edutracker_user");
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      setUserEmail(parsed.email);
+      const colleges = localStorage.getItem("edutracker_colleges");
+      if (colleges) {
+        setSelectedColleges(JSON.parse(colleges));
+        setView("dashboard");
+      } else {
+        setView("onboarding");
       }
-    } catch {
-      setDataLoaded(true);
-      if (lsColleges.length === 0) setView("onboarding");
     }
+    const prefs = localStorage.getItem("edutracker_alert_prefs");
+    if (prefs) setAlertPrefsMap(JSON.parse(prefs));
+    const ph = localStorage.getItem("edutracker_phone");
+    if (ph) setPhone(ph);
   }, []);
 
-  function persistColleges(email: string, c: College[]) {
-    setColleges(c);
-    lsSet(`et_colleges_${email}`, c);
-  }
-  function persistDeadlines(email: string, d: Deadline[]) {
-    setDeadlines(d);
-    lsSet(`et_deadlines_${email}`, d);
-  }
-
-  // ── Auth ──────────────────────────────────────────────────────────────────
-
-  async function handleAuth(e: React.FormEvent) {
-    e.preventDefault();
-    setAuthError("");
+  const handleAuth = async () => {
     setAuthLoading(true);
+    setAuthError("");
     try {
-      const r = await fetch("/api/auth", {
+      const res = await fetch("/api/auth", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: authMode, email: authEmail, password: authPassword }),
+        body: JSON.stringify({ mode: authMode, email, password }),
       });
-      const data = await r.json();
+      const data = await res.json();
       if (data.ok) {
-        const email = data.email as string;
-        setAuth({ email, loggedIn: true });
-        lsSet("et_auth", { email });
-        await loadData(email);
+        setUserEmail(data.email);
+        localStorage.setItem("edutracker_user", JSON.stringify({ email: data.email }));
+        const colleges = localStorage.getItem("edutracker_colleges");
+        if (colleges && JSON.parse(colleges).length > 0) {
+          setSelectedColleges(JSON.parse(colleges));
+          setView("dashboard");
+        } else {
+          setView("onboarding");
+        }
       } else {
-        setAuthError(data.error ?? "Something went wrong");
+        setAuthError(data.error || "Authentication failed");
       }
     } catch {
       setAuthError("Network error. Please try again.");
     }
     setAuthLoading(false);
-  }
+  };
 
-  function handleLogout() {
-    lsSet("et_auth", null);
-    setAuth({ email: "", loggedIn: false });
-    setColleges([]);
-    setDeadlines([]);
+  const handleLogout = () => {
+    localStorage.removeItem("edutracker_user");
+    localStorage.removeItem("edutracker_colleges");
+    localStorage.removeItem("edutracker_alert_prefs");
+    localStorage.removeItem("edutracker_phone");
+    setUserEmail(null);
+    setSelectedColleges([]);
+    setAlertPrefsMap({});
+    setEmail("");
+    setPassword("");
     setView("auth");
-    setDataLoaded(false);
-  }
+  };
 
-  // ── Onboarding ────────────────────────────────────────────────────────────
+  const toggleCollege = (id: string) => {
+    setSelectedColleges((prev) =>
+      prev.includes(id) ? prev.filter((c) => c !== id) : [...prev, id]
+    );
+  };
 
-  function selectOnboardCollege(name: string, location: string) {
-    if (onboardColleges.some(c => c.name === name)) return;
-    setOnboardColleges(prev => [...prev, { name, location }]);
-    setOnboardSearch("");
-  }
-
-  function removeOnboardCollege(name: string) {
-    setOnboardColleges(prev => prev.filter(c => c.name !== name));
-  }
-
-  async function finishOnboarding() {
-    if (onboardColleges.length === 0) {
-      setView("dashboard");
-      return;
-    }
-    setOnboardLoading(true);
-    const newColleges: College[] = [];
-    for (const oc of onboardColleges) {
-      try {
-        const data = await apiPost({
-          action: "add_college",
-          email: auth.email,
-          name: oc.name,
-          location: oc.location,
-        });
-        if (data.college) {
-          newColleges.push({
-            id: String(data.college.id),
-            name: oc.name,
-            location: oc.location,
-          });
-        }
-      } catch {
-        // localStorage fallback
-        newColleges.push({
-          id: `local_${Date.now()}_${Math.random()}`,
-          name: oc.name,
-          location: oc.location,
-        });
-      }
-    }
-    persistColleges(auth.email, newColleges);
-    setOnboardLoading(false);
-    setView("dashboard");
-  }
-
-  // ── Add College (dashboard) ───────────────────────────────────────────────
-
-  async function handleAddCollege() {
-    const name = addCollegeName.trim() || addSearch.trim();
-    if (!name) return;
-    const location = addCollegeLocation.trim();
-    try {
-      const data = await apiPost({ action: "add_college", email: auth.email, name, location });
-      if (data.college) {
-        const c: College = {
-          id: String(data.college.id),
-          name: String(data.college.college_name ?? name),
-          location: String(data.college.location ?? location),
-        };
-        persistColleges(auth.email, [...colleges, c]);
-      }
-    } catch {
-      const c: College = {
-        id: `local_${Date.now()}`,
-        name,
-        location,
-      };
-      persistColleges(auth.email, [...colleges, c]);
-    }
-    setShowAddCollege(false);
-    setAddSearch("");
-    setAddCollegeName("");
-    setAddCollegeLocation("");
-  }
-
-  // ── Add Deadline ──────────────────────────────────────────────────────────
-
-  function openAddDeadline(college?: College) {
-    setDlCollege(college ?? null);
-    setDlType("RD");
-    setDlDate("");
-    setDlNotes("");
-    setDlError("");
-    setShowAddDeadline(true);
-  }
-
-  async function handleAddDeadline(e: React.FormEvent) {
-    e.preventDefault();
-    if (!dlCollege) { setDlError("Select a college"); return; }
-    if (!dlDate) { setDlError("Pick a date"); return; }
-    setDlError("");
-    try {
-      const data = await apiPost({
-        action: "add_deadline",
-        email: auth.email,
-        collegeId: dlCollege.id,
-        collegeName: dlCollege.name,
-        collegeLocation: dlCollege.location,
-        type: dlType,
-        date: dlDate,
-        notes: dlNotes,
-      });
-      if (data.deadline) {
-        const dl: Deadline = {
-          id: String(data.deadline.id),
-          collegeId: String(data.deadline.college_id),
-          collegeName: dlCollege.name,
-          collegeLocation: dlCollege.location,
-          type: dlType,
-          date: dlDate,
-          notes: dlNotes,
-        };
-        persistDeadlines(auth.email, [...deadlines, dl]);
-      }
-    } catch {
-      const dl: Deadline = {
-        id: `local_${Date.now()}`,
-        collegeId: dlCollege.id,
-        collegeName: dlCollege.name,
-        collegeLocation: dlCollege.location,
-        type: dlType,
-        date: dlDate,
-        notes: dlNotes,
-      };
-      persistDeadlines(auth.email, [...deadlines, dl]);
-    }
-    setShowAddDeadline(false);
-  }
-
-  // ── Delete ────────────────────────────────────────────────────────────────
-
-  async function handleDeleteDeadline(id: string) {
-    try {
-      await apiPost({ action: "delete_deadline", email: auth.email, deadlineId: id });
-    } catch {
-      // local only
-    }
-    persistDeadlines(auth.email, deadlines.filter(d => d.id !== id));
-  }
-
-  async function handleDeleteCollege(id: string) {
-    try {
-      await apiPost({ action: "delete_college", email: auth.email, collegeId: id });
-    } catch {
-      // local only
-    }
-    persistColleges(auth.email, colleges.filter(c => c.id !== id));
-    persistDeadlines(auth.email, deadlines.filter(d => d.collegeId !== id));
-  }
-
-  // ── Derived data ──────────────────────────────────────────────────────────
-
-  const sortedDeadlines = [...deadlines]
-    .filter(d => {
-      const u = getUrgency(d.date);
-      if (!showPast && u.daysRemaining < 0) return false;
-      if (filterType !== "all" && d.type !== filterType) return false;
-      return true;
-    })
-    .sort((a, b) => {
-      const ua = getUrgency(a.date).daysRemaining;
-      const ub = getUrgency(b.date).daysRemaining;
-      return ua - ub;
+  const saveSelections = () => {
+    localStorage.setItem("edutracker_colleges", JSON.stringify(selectedColleges));
+    if (phone) localStorage.setItem("edutracker_phone", phone);
+    const initialPrefs: Record<string, AlertPrefs> = {};
+    selectedColleges.forEach((id) => {
+      if (!alertPrefsMap[id]) initialPrefs[id] = { ...defaultAlertPrefs };
     });
+    const merged = { ...alertPrefsMap, ...initialPrefs };
+    setAlertPrefsMap(merged);
+    localStorage.setItem("edutracker_alert_prefs", JSON.stringify(merged));
+    setView("dashboard");
+  };
 
-  const upcomingCount = deadlines.filter(d => {
-    const u = getUrgency(d.date);
-    return u.daysRemaining >= 0 && u.daysRemaining <= 30;
-  }).length;
+  const updateAlertPref = (collegeId: string, key: keyof AlertPrefs, value: boolean) => {
+    const updated = {
+      ...alertPrefsMap,
+      [collegeId]: {
+        ...(alertPrefsMap[collegeId] || defaultAlertPrefs),
+        [key]: value,
+      },
+    };
+    setAlertPrefsMap(updated);
+    localStorage.setItem("edutracker_alert_prefs", JSON.stringify(updated));
+  };
 
-  const urgentCount = deadlines.filter(d => {
-    const u = getUrgency(d.date);
-    return u.daysRemaining >= 0 && u.daysRemaining <= 7;
-  }).length;
+  const getUserDeadlines = useCallback((): UserDeadline[] => {
+    const result: UserDeadline[] = [];
+    selectedColleges.forEach((id) => {
+      const college = COLLEGES.find((c) => c.id === id);
+      if (!college) return;
+      college.deadlines.forEach((dl) => {
+        result.push({
+          collegeId: id,
+          collegeName: college.name,
+          deadlineType: dl.type,
+          deadlineLabel: dl.label,
+          date: dl.date,
+          notes: dl.notes,
+          daysUntil: daysUntil(dl.date),
+          alertPrefs: alertPrefsMap[id] || defaultAlertPrefs,
+        });
+      });
+    });
+    result.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    return result;
+  }, [selectedColleges, alertPrefsMap]);
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // RENDER
-  // ══════════════════════════════════════════════════════════════════════════
+  const filteredColleges = COLLEGES.filter((c) => {
+    const q = searchQuery.toLowerCase();
+    const matchSearch = c.name.toLowerCase().includes(q) || c.location.toLowerCase().includes(q);
+    const matchType = filterType === "All" || c.type === filterType;
+    return matchSearch && matchType;
+  });
 
-  // ── Auth Screen ───────────────────────────────────────────────────────────
+  const allDeadlines = getUserDeadlines();
+  const upcomingDeadlines = allDeadlines.filter((d) => d.daysUntil >= 0);
+  const pastDeadlines = allDeadlines.filter((d) => d.daysUntil < 0).reverse();
 
-  if (!auth.loggedIn || view === "auth") {
+  const displayDeadlines =
+    activeTab === "upcoming"
+      ? upcomingDeadlines.filter((d) => dashboardFilter === "All" || d.deadlineType === dashboardFilter)
+      : pastDeadlines.filter((d) => dashboardFilter === "All" || d.deadlineType === dashboardFilter);
+
+  const nextDeadline = upcomingDeadlines[0];
+
+  if (view === "auth") {
     return (
-      <div style={{
-        minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center",
-        background: "linear-gradient(135deg, #ede9fe 0%, #e0e7ff 50%, #f0fdf4 100%)",
-        padding: 16,
-      }}>
-        <div style={{
-          background: "#fff", borderRadius: 20, padding: "40px 36px",
-          width: "100%", maxWidth: 420,
-          boxShadow: "0 20px 60px rgba(99,102,241,0.12)",
-        }} className="fade-in">
-          <div style={{ textAlign: "center", marginBottom: 32 }}>
-            <Logo />
-            <p style={{ marginTop: 10, color: "#64748b", fontSize: 15 }}>
-              Never miss a college application deadline
-            </p>
+      <div style={{ minHeight: "100vh", background: "linear-gradient(135deg, #1e3a5f 0%, #2563eb 100%)", display: "flex", alignItems: "center", justifyContent: "center", padding: "20px", fontFamily: "'Inter', system-ui, sans-serif" }}>
+        <div style={{ background: "white", borderRadius: "20px", padding: "48px 40px", width: "100%", maxWidth: "420px", boxShadow: "0 25px 60px rgba(0,0,0,0.3)" }}>
+          <div style={{ textAlign: "center", marginBottom: "32px" }}>
+            <div style={{ fontSize: "40px", marginBottom: "8px" }}>🎓</div>
+            <h1 style={{ fontSize: "28px", fontWeight: "800", color: "#1e3a5f", margin: "0 0 6px 0" }}>Edutracker</h1>
+            <p style={{ color: "#6b7280", margin: 0, fontSize: "15px" }}>Never miss a college deadline</p>
           </div>
 
-          <div style={{ display: "flex", background: "#f1f5f9", borderRadius: 12, padding: 4, marginBottom: 28 }}>
-            {(["login", "signup"] as AuthMode[]).map(m => (
+          <div style={{ display: "flex", background: "#f3f4f6", borderRadius: "10px", padding: "4px", marginBottom: "24px" }}>
+            {(["login", "signup"] as const).map((m) => (
               <button
                 key={m}
                 onClick={() => { setAuthMode(m); setAuthError(""); }}
-                style={{
-                  flex: 1, padding: "9px 0", borderRadius: 9, border: "none",
-                  fontWeight: 600, fontSize: 14, transition: "all 0.2s",
-                  background: authMode === m ? "#fff" : "transparent",
-                  color: authMode === m ? "#6366f1" : "#64748b",
-                  boxShadow: authMode === m ? "0 2px 8px rgba(0,0,0,0.08)" : "none",
-                }}
+                style={{ flex: 1, padding: "10px", border: "none", borderRadius: "8px", cursor: "pointer", fontWeight: "600", fontSize: "14px", transition: "all 0.2s", background: authMode === m ? "white" : "transparent", color: authMode === m ? "#1e3a5f" : "#6b7280", boxShadow: authMode === m ? "0 2px 8px rgba(0,0,0,0.1)" : "none" }}
               >
-                {m === "login" ? "Sign In" : "Create Account"}
+                {m === "login" ? "Log In" : "Sign Up"}
               </button>
             ))}
           </div>
 
-          <form onSubmit={handleAuth}>
-            <div style={{ marginBottom: 16 }}>
-              <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#374151", marginBottom: 6 }}>
-                Email
-              </label>
+          <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+            <div>
+              <label style={{ fontSize: "13px", fontWeight: "600", color: "#374151", display: "block", marginBottom: "6px" }}>Email</label>
               <input
                 type="email"
-                required
-                value={authEmail}
-                onChange={e => setAuthEmail(e.target.value)}
-                placeholder="you@example.com"
-                style={{
-                  width: "100%", padding: "11px 14px", borderRadius: 10,
-                  border: "1.5px solid #e2e8f0", fontSize: 15, outline: "none",
-                }}
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="you@school.edu"
+                onKeyDown={(e) => e.key === "Enter" && handleAuth()}
+                style={{ width: "100%", padding: "12px 14px", border: "2px solid #e5e7eb", borderRadius: "10px", fontSize: "15px", outline: "none", boxSizing: "border-box", transition: "border-color 0.2s" }}
+                onFocus={(e) => (e.target.style.borderColor = "#2563eb")}
+                onBlur={(e) => (e.target.style.borderColor = "#e5e7eb")}
               />
             </div>
-            <div style={{ marginBottom: 24 }}>
-              <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#374151", marginBottom: 6 }}>
-                Password
-              </label>
+            <div>
+              <label style={{ fontSize: "13px", fontWeight: "600", color: "#374151", display: "block", marginBottom: "6px" }}>Password</label>
               <input
                 type="password"
-                required
-                value={authPassword}
-                onChange={e => setAuthPassword(e.target.value)}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
-                style={{
-                  width: "100%", padding: "11px 14px", borderRadius: 10,
-                  border: "1.5px solid #e2e8f0", fontSize: 15, outline: "none",
-                }}
+                onKeyDown={(e) => e.key === "Enter" && handleAuth()}
+                style={{ width: "100%", padding: "12px 14px", border: "2px solid #e5e7eb", borderRadius: "10px", fontSize: "15px", outline: "none", boxSizing: "border-box", transition: "border-color 0.2s" }}
+                onFocus={(e) => (e.target.style.borderColor = "#2563eb")}
+                onBlur={(e) => (e.target.style.borderColor = "#e5e7eb")}
               />
             </div>
+          </div>
 
-            {authError && (
-              <div style={{
-                background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 10,
-                padding: "10px 14px", fontSize: 14, color: "#dc2626", marginBottom: 16,
-              }}>
-                {authError}
-              </div>
-            )}
+          {authError && (
+            <div style={{ marginTop: "16px", padding: "12px 14px", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: "8px", color: "#dc2626", fontSize: "14px" }}>
+              ⚠️ {authError}
+            </div>
+          )}
 
-            <button
-              type="submit"
-              disabled={authLoading}
-              style={{
-                width: "100%", padding: "13px", borderRadius: 12, border: "none",
-                background: authLoading ? "#a5b4fc" : "linear-gradient(135deg, #6366f1, #8b5cf6)",
-                color: "#fff", fontWeight: 700, fontSize: 16, cursor: authLoading ? "not-allowed" : "pointer",
-                boxShadow: "0 4px 14px rgba(99,102,241,0.35)",
-                transition: "all 0.2s",
-              }}
-            >
-              {authLoading ? "Loading…" : authMode === "login" ? "Sign In" : "Create Account"}
-            </button>
-          </form>
+          <button
+            onClick={handleAuth}
+            disabled={authLoading || !email || !password}
+            style={{ marginTop: "24px", width: "100%", padding: "14px", background: authLoading || !email || !password ? "#93c5fd" : "linear-gradient(135deg, #1e3a5f, #2563eb)", color: "white", border: "none", borderRadius: "10px", fontSize: "16px", fontWeight: "700", cursor: authLoading || !email || !password ? "not-allowed" : "pointer", transition: "all 0.2s" }}
+          >
+            {authLoading ? "Please wait..." : authMode === "login" ? "Log In →" : "Create Account →"}
+          </button>
 
-          <p style={{ textAlign: "center", marginTop: 20, fontSize: 13, color: "#94a3b8" }}>
+          <p style={{ textAlign: "center", color: "#9ca3af", fontSize: "13px", marginTop: "20px", marginBottom: 0 }}>
             {authMode === "login" ? "Don't have an account? " : "Already have an account? "}
-            <button
-              onClick={() => { setAuthMode(authMode === "login" ? "signup" : "login"); setAuthError(""); }}
-              style={{ background: "none", border: "none", color: "#6366f1", fontWeight: 600, fontSize: 13, cursor: "pointer" }}
-            >
-              {authMode === "login" ? "Sign up free" : "Sign in"}
+            <button onClick={() => setAuthMode(authMode === "login" ? "signup" : "login")} style={{ background: "none", border: "none", color: "#2563eb", cursor: "pointer", fontWeight: "600", fontSize: "13px", padding: 0 }}>
+              {authMode === "login" ? "Sign Up" : "Log In"}
             </button>
           </p>
         </div>
       </div>
     );
   }
-
-  // ── Onboarding ────────────────────────────────────────────────────────────
 
   if (view === "onboarding") {
-    const steps = ["Welcome", "Add Colleges", "You're set!"];
     return (
-      <div style={{
-        minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center",
-        background: "linear-gradient(135deg, #ede9fe 0%, #e0e7ff 50%, #f0fdf4 100%)",
-        padding: 16,
-      }}>
-        <div style={{
-          background: "#fff", borderRadius: 20, padding: "40px 36px",
-          width: "100%", maxWidth: 500,
-          boxShadow: "0 20px 60px rgba(99,102,241,0.12)",
-        }} className="fade-in">
-          {/* Progress */}
-          <div style={{ display: "flex", alignItems: "center", marginBottom: 32, gap: 8 }}>
-            {steps.map((s, i) => (
-              <div key={s} style={{ display: "flex", alignItems: "center", flex: i < steps.length - 1 ? 1 : undefined }}>
-                <div style={{
-                  width: 28, height: 28, borderRadius: "50%", flexShrink: 0,
-                  background: i <= onboardStep ? "linear-gradient(135deg, #6366f1, #8b5cf6)" : "#e2e8f0",
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  fontSize: 12, fontWeight: 700,
-                  color: i <= onboardStep ? "#fff" : "#94a3b8",
-                }}>
-                  {i < onboardStep ? "✓" : i + 1}
-                </div>
-                {i < steps.length - 1 && (
-                  <div style={{
-                    flex: 1, height: 2, margin: "0 6px",
-                    background: i < onboardStep ? "#6366f1" : "#e2e8f0",
-                    borderRadius: 1,
-                  }} />
-                )}
-              </div>
-            ))}
-          </div>
-
-          {onboardStep === 0 && (
-            <div className="fade-in">
-              <div style={{ fontSize: 40, marginBottom: 16 }}>🎓</div>
-              <h2 style={{ fontSize: 24, fontWeight: 800, color: "#1e293b", marginBottom: 10 }}>
-                Welcome to Edutracker!
-              </h2>
-              <p style={{ color: "#64748b", fontSize: 15, lineHeight: 1.6, marginBottom: 28 }}>
-                You're signed in as <strong>{auth.email}</strong>.<br />
-                Let's set up your college list in 2 quick steps so you never miss a deadline.
-              </p>
-              <button
-                onClick={() => setOnboardStep(1)}
-                style={{
-                  width: "100%", padding: "13px", borderRadius: 12, border: "none",
-                  background: "linear-gradient(135deg, #6366f1, #8b5cf6)",
-                  color: "#fff", fontWeight: 700, fontSize: 16,
-                  boxShadow: "0 4px 14px rgba(99,102,241,0.35)",
-                }}
-              >
-                Get Started →
-              </button>
+      <div style={{ minHeight: "100vh", background: "#f8fafc", fontFamily: "'Inter', system-ui, sans-serif" }}>
+        <div style={{ background: "linear-gradient(135deg, #1e3a5f 0%, #2563eb 100%)", padding: "20px 24px", color: "white" }}>
+          <div style={{ maxWidth: "900px", margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+              <span style={{ fontSize: "24px" }}>🎓</span>
+              <span style={{ fontSize: "20px", fontWeight: "800" }}>Edutracker</span>
             </div>
-          )}
+            <span style={{ fontSize: "14px", opacity: 0.8 }}>Signed in as {userEmail}</span>
+          </div>
+        </div>
 
-          {onboardStep === 1 && (
-            <div className="fade-in">
-              <h2 style={{ fontSize: 22, fontWeight: 800, color: "#1e293b", marginBottom: 6 }}>
-                Add your colleges
-              </h2>
-              <p style={{ color: "#64748b", fontSize: 14, marginBottom: 20 }}>
-                Search for up to 3 colleges you're applying to. You can add more later.
-              </p>
+        <div style={{ maxWidth: "900px", margin: "0 auto", padding: "32px 24px" }}>
+          {onboardingStep === 0 && (
+            <>
+              <div style={{ marginBottom: "32px" }}>
+                <h2 style={{ fontSize: "28px", fontWeight: "800", color: "#1e3a5f", margin: "0 0 8px 0" }}>Choose Your Target Schools</h2>
+                <p style={{ color: "#6b7280", margin: "0 0 24px 0", fontSize: "16px" }}>Select the colleges you're applying to. We'll track all their deadlines for you.</p>
+                <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
+                  <div style={{ flex: 1, minWidth: "200px" }}>
+                    <input
+                      type="text"
+                      placeholder="🔍 Search colleges..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      style={{ width: "100%", padding: "12px 14px", border: "2px solid #e5e7eb", borderRadius: "10px", fontSize: "15px", outline: "none", boxSizing: "border-box" }}
+                    />
+                  </div>
+                  <select
+                    value={filterType}
+                    onChange={(e) => setFilterType(e.target.value)}
+                    style={{ padding: "12px 14px", border: "2px solid #e5e7eb", borderRadius: "10px", fontSize: "15px", outline: "none", background: "white", cursor: "pointer" }}
+                  >
+                    {["All", "Ivy League", "Public", "Liberal Arts", "Tech", "Private"].map((t) => (
+                      <option key={t} value={t}>{t}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
 
-              <CollegeSearch
-                value={onboardSearch}
-                onChange={setOnboardSearch}
-                onSelect={selectOnboardCollege}
-                placeholder="Search college name or city…"
-              />
-
-              {onboardColleges.length > 0 && (
-                <div style={{ marginTop: 16 }}>
-                  {onboardColleges.map(c => (
-                    <div key={c.name} style={{
-                      display: "flex", alignItems: "center", justifyContent: "space-between",
-                      padding: "10px 14px", borderRadius: 10, background: "#f8fafc",
-                      border: "1.5px solid #e2e8f0", marginBottom: 8,
-                    }} className="slide-in">
-                      <div>
-                        <div style={{ fontWeight: 600, fontSize: 14, color: "#1e293b" }}>{c.name}</div>
-                        {c.location && <div style={{ fontSize: 12, color: "#64748b" }}>{c.location}</div>}
-                      </div>
-                      <button
-                        onClick={() => removeOnboardCollege(c.name)}
-                        style={{
-                          background: "none", border: "none", color: "#ef4444",
-                          fontSize: 18, lineHeight: 1, padding: "0 4px",
-                        }}
-                      >×</button>
-                    </div>
-                  ))}
+              {selectedColleges.length > 0 && (
+                <div style={{ marginBottom: "20px", padding: "14px 18px", background: "#eff6ff", border: "2px solid #bfdbfe", borderRadius: "12px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <span style={{ color: "#1d4ed8", fontWeight: "600" }}>✓ {selectedColleges.length} school{selectedColleges.length !== 1 ? "s" : ""} selected</span>
+                  <button
+                    onClick={() => setOnboardingStep(1)}
+                    style={{ padding: "8px 20px", background: "#2563eb", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontWeight: "600", fontSize: "14px" }}
+                  >
+                    Continue →
+                  </button>
                 </div>
               )}
 
-              <div style={{ display: "flex", gap: 10, marginTop: 24 }}>
-                <button
-                  onClick={() => setOnboardStep(0)}
-                  style={{
-                    flex: 1, padding: "12px", borderRadius: 12,
-                    border: "1.5px solid #e2e8f0", background: "#fff",
-                    color: "#374151", fontWeight: 600, fontSize: 15,
-                  }}
-                >← Back</button>
-                <button
-                  onClick={async () => { setOnboardStep(2); await finishOnboarding(); }}
-                  disabled={onboardLoading}
-                  style={{
-                    flex: 2, padding: "12px", borderRadius: 12, border: "none",
-                    background: onboardColleges.length === 0
-                      ? "#e2e8f0"
-                      : "linear-gradient(135deg, #6366f1, #8b5cf6)",
-                    color: onboardColleges.length === 0 ? "#94a3b8" : "#fff",
-                    fontWeight: 700, fontSize: 15,
-                    boxShadow: onboardColleges.length > 0 ? "0 4px 14px rgba(99,102,241,0.35)" : "none",
-                  }}
-                >
-                  {onboardLoading ? "Saving…" : onboardColleges.length === 0 ? "Skip for now →" : `Add ${onboardColleges.length} college${onboardColleges.length !== 1 ? "s" : ""} →`}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {onboardStep === 2 && (
-            <div className="fade-in" style={{ textAlign: "center" }}>
-              <div style={{ fontSize: 48, marginBottom: 16 }}>🎉</div>
-              <h2 style={{ fontSize: 24, fontWeight: 800, color: "#1e293b", marginBottom: 10 }}>
-                You're all set!
-              </h2>
-              <p style={{ color: "#64748b", fontSize: 15, lineHeight: 1.6, marginBottom: 28 }}>
-                {onboardColleges.length > 0
-                  ? `Added ${onboardColleges.length} college${onboardColleges.length !== 1 ? "s" : ""} to your list. Now go add your deadlines!`
-                  : "Your account is ready. Go add your colleges and deadlines!"}
-              </p>
-              {onboardLoading && (
-                <p style={{ color: "#6366f1", fontSize: 14, marginBottom: 16, animation: "pulse 1.5s infinite" }}>
-                  Saving your colleges…
-                </p>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  // ── Dashboard ─────────────────────────────────────────────────────────────
-
-  return (
-    <div style={{ minHeight: "100vh", background: "#f8fafc" }}>
-      {/* Header */}
-      <header style={{
-        background: "#fff", borderBottom: "1px solid #e2e8f0",
-        padding: "0 24px", height: 64,
-        display: "flex", alignItems: "center", justifyContent: "space-between",
-        position: "sticky", top: 0, zIndex: 50,
-        boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
-      }}>
-        <Logo />
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <span style={{ fontSize: 13, color: "#64748b", display: "none" }}
-            className="email-label">
-            {auth.email}
-          </span>
-          <div style={{
-            width: 34, height: 34, borderRadius: "50%",
-            background: "linear-gradient(135deg, #6366f1, #8b5cf6)",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            color: "#fff", fontWeight: 700, fontSize: 14,
-          }}>
-            {auth.email.charAt(0).toUpperCase()}
-          </div>
-          <button
-            onClick={handleLogout}
-            style={{
-              padding: "7px 14px", borderRadius: 8,
-              border: "1.5px solid #e2e8f0", background: "#fff",
-              color: "#64748b", fontSize: 13, fontWeight: 600,
-            }}
-          >
-            Sign out
-          </button>
-        </div>
-      </header>
-
-      <main style={{ maxWidth: 900, margin: "0 auto", padding: "28px 20px 60px" }}>
-        {/* Stats bar */}
-        {dataLoaded && (
-          <div style={{
-            display: "grid", gridTemplateColumns: "repeat(3, 1fr)",
-            gap: 16, marginBottom: 28,
-          }} className="fade-in">
-            {[
-              { label: "Colleges", value: colleges.length, icon: "🏫", color: "#6366f1" },
-              { label: "Upcoming (30d)", value: upcomingCount, icon: "📅", color: "#d97706" },
-              { label: "Urgent (7d)", value: urgentCount, icon: "🔥", color: "#dc2626" },
-            ].map(stat => (
-              <div key={stat.label} style={{
-                background: "#fff", borderRadius: 14, padding: "18px 20px",
-                border: "1.5px solid #e2e8f0",
-                boxShadow: "0 1px 4px rgba(0,0,0,0.05)",
-                display: "flex", alignItems: "center", gap: 14,
-              }}>
-                <div style={{
-                  width: 44, height: 44, borderRadius: 12,
-                  background: `${stat.color}18`,
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  fontSize: 20, flexShrink: 0,
-                }}>
-                  {stat.icon}
-                </div>
-                <div>
-                  <div style={{ fontSize: 26, fontWeight: 800, color: stat.color, lineHeight: 1 }}>
-                    {stat.value}
-                  </div>
-                  <div style={{ fontSize: 12, color: "#64748b", marginTop: 3 }}>{stat.label}</div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Action bar */}
-        <div style={{
-          display: "flex", alignItems: "center", flexWrap: "wrap",
-          gap: 10, marginBottom: 24,
-          justifyContent: "space-between",
-        }}>
-          <h1 style={{ fontSize: 22, fontWeight: 800, color: "#1e293b" }}>
-            Upcoming Deadlines
-          </h1>
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <button
-              onClick={() => setShowAddCollege(true)}
-              style={{
-                padding: "9px 16px", borderRadius: 10,
-                border: "1.5px solid #6366f1", background: "#fff",
-                color: "#6366f1", fontSize: 14, fontWeight: 600,
-              }}
-            >
-              + Add College
-            </button>
-            <button
-              onClick={() => openAddDeadline()}
-              style={{
-                padding: "9px 16px", borderRadius: 10, border: "none",
-                background: "linear-gradient(135deg, #6366f1, #8b5cf6)",
-                color: "#fff", fontSize: 14, fontWeight: 700,
-                boxShadow: "0 3px 10px rgba(99,102,241,0.3)",
-              }}
-            >
-              + Add Deadline
-            </button>
-          </div>
-        </div>
-
-        {/* Filters */}
-        <div style={{
-          display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 20, alignItems: "center",
-        }}>
-          {(["all", "EA", "ED", "RD", "Scholarship"] as const).map(t => (
-            <button
-              key={t}
-              onClick={() => setFilterType(t)}
-              style={{
-                padding: "6px 14px", borderRadius: 20, fontSize: 13, fontWeight: 600,
-                border: "1.5px solid",
-                borderColor: filterType === t ? "#6366f1" : "#e2e8f0",
-                background: filterType === t ? "#6366f1" : "#fff",
-                color: filterType === t ? "#fff" : "#64748b",
-                transition: "all 0.15s",
-              }}
-            >
-              {t === "all" ? "All Types" : t}
-            </button>
-          ))}
-          <button
-            onClick={() => setShowPast(!showPast)}
-            style={{
-              padding: "6px 14px", borderRadius: 20, fontSize: 13, fontWeight: 600,
-              border: "1.5px solid",
-              borderColor: showPast ? "#6366f1" : "#e2e8f0",
-              background: showPast ? "#ede9fe" : "#fff",
-              color: showPast ? "#6366f1" : "#64748b",
-              marginLeft: "auto",
-            }}
-          >
-            {showPast ? "✓ Show Past" : "Show Past"}
-          </button>
-        </div>
-
-        {/* Deadline list */}
-        {!dataLoaded ? (
-          <div style={{ textAlign: "center", padding: "60px 0", color: "#94a3b8" }}>
-            <div style={{ fontSize: 32, marginBottom: 12 }}>⏳</div>
-            <p>Loading your deadlines…</p>
-          </div>
-        ) : sortedDeadlines.length === 0 ? (
-          <div style={{
-            textAlign: "center", padding: "60px 24px",
-            background: "#fff", borderRadius: 16, border: "1.5px dashed #e2e8f0",
-          }}>
-            <div style={{ fontSize: 48, marginBottom: 16 }}>📋</div>
-            <h3 style={{ fontSize: 18, fontWeight: 700, color: "#1e293b", marginBottom: 8 }}>
-              {colleges.length === 0 ? "No colleges added yet" : "No deadlines yet"}
-            </h3>
-            <p style={{ color: "#64748b", fontSize: 14, marginBottom: 24 }}>
-              {colleges.length === 0
-                ? "Start by adding the colleges you're applying to."
-                : "Add your application deadlines to start tracking them."}
-            </p>
-            <button
-              onClick={() => colleges.length === 0 ? setShowAddCollege(true) : openAddDeadline()}
-              style={{
-                padding: "11px 24px", borderRadius: 12, border: "none",
-                background: "linear-gradient(135deg, #6366f1, #8b5cf6)",
-                color: "#fff", fontWeight: 700, fontSize: 15,
-                boxShadow: "0 4px 14px rgba(99,102,241,0.3)",
-              }}
-            >
-              {colleges.length === 0 ? "+ Add College" : "+ Add Deadline"}
-            </button>
-          </div>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {sortedDeadlines.map((dl, i) => {
-              const urgency = getUrgency(dl.date);
-              const badge = getDeadlineTypeBadge(dl.type);
-              const isPast = urgency.daysRemaining < 0;
-              return (
-                <div
-                  key={dl.id}
-                  className="fade-in"
-                  style={{
-                    background: isPast ? "#fafafa" : urgency.bgColor,
-                    border: `1.5px solid ${isPast ? "#e5e7eb" : urgency.borderColor}`,
-                    borderRadius: 14,
-                    padding: "16px 20px",
-                    display: "flex", alignItems: "center", gap: 16,
-                    opacity: isPast ? 0.65 : 1,
-                    animationDelay: `${i * 0.04}s`,
-                    transition: "box-shadow 0.2s",
-                  }}
-                  onMouseOver={e => !isPast && ((e.currentTarget as HTMLElement).style.boxShadow = "0 4px 16px rgba(0,0,0,0.08)")}
-                  onMouseOut={e => ((e.currentTarget as HTMLElement).style.boxShadow = "none")}
-                >
-                  {/* Urgency badge */}
-                  <div style={{
-                    flexShrink: 0, width: 56, height: 56, borderRadius: 12,
-                    background: isPast ? "#f3f4f6" : urgency.color,
-                    display: "flex", flexDirection: "column",
-                    alignItems: "center", justifyContent: "center",
-                    color: isPast ? "#9ca3af" : "#fff",
-                    fontWeight: 800,
-                  }}>
-                    <span style={{ fontSize: isPast ? 11 : urgency.daysRemaining === 0 ? 9 : 15, lineHeight: 1.1 }}>
-                      {isPast ? "PAST" : urgency.daysRemaining === 0 ? "TODAY" : urgency.label}
-                    </span>
-                    {urgency.daysRemaining > 0 && !isPast && (
-                      <span style={{ fontSize: 9, opacity: 0.85 }}>days</span>
-                    )}
-                  </div>
-
-                  {/* Info */}
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 3 }}>
-                      <span style={{ fontWeight: 700, fontSize: 15, color: "#1e293b" }}>
-                        {dl.collegeName}
-                      </span>
-                      <span style={{
-                        padding: "2px 9px", borderRadius: 20, fontSize: 11, fontWeight: 700,
-                        background: badge.bg, color: badge.color,
-                      }}>
-                        {dl.type}
-                      </span>
-                    </div>
-                    <div style={{ fontSize: 13, color: "#64748b" }}>
-                      {dl.collegeLocation && <span>{dl.collegeLocation} · </span>}
-                      <span>{new Date(dl.date + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span>
-                    </div>
-                    {dl.notes && (
-                      <div style={{ fontSize: 12, color: "#6366f1", marginTop: 4, fontStyle: "italic" }}>
-                        {dl.notes}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Actions */}
-                  <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                    <button
-                      onClick={() => { openAddDeadline(colleges.find(c => c.id === dl.collegeId)); }}
-                      title="Add another deadline for this college"
-                      style={{
-                        padding: "6px 10px", borderRadius: 8,
-                        border: "1.5px solid #e2e8f0", background: "#fff",
-                        color: "#6366f1", fontSize: 13, fontWeight: 600,
-                      }}
-                    >+</button>
-                    <button
-                      onClick={() => handleDeleteDeadline(dl.id)}
-                      title="Remove deadline"
-                      style={{
-                        padding: "6px 10px", borderRadius: 8,
-                        border: "1.5px solid #fca5a5", background: "#fff",
-                        color: "#ef4444", fontSize: 13,
-                      }}
-                    >×</button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        {/* College management section */}
-        {colleges.length > 0 && (
-          <div style={{ marginTop: 48 }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-              <h2 style={{ fontSize: 18, fontWeight: 800, color: "#1e293b" }}>My Colleges</h2>
-              <button
-                onClick={() => setShowAddCollege(true)}
-                style={{
-                  padding: "7px 14px", borderRadius: 9,
-                  border: "1.5px solid #6366f1", background: "#fff",
-                  color: "#6366f1", fontSize: 13, fontWeight: 600,
-                }}
-              >
-                + Add College
-              </button>
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 12 }}>
-              {colleges.map(c => {
-                const colDeadlines = deadlines.filter(d => d.collegeId === c.id);
-                const nextDeadline = colDeadlines
-                  .filter(d => getUrgency(d.date).daysRemaining >= 0)
-                  .sort((a, b) => getUrgency(a.date).daysRemaining - getUrgency(b.date).daysRemaining)[0];
-                return (
-                  <div key={c.id} style={{
-                    background: "#fff", borderRadius: 14, padding: "16px",
-                    border: "1.5px solid #e2e8f0",
-                    boxShadow: "0 1px 4px rgba(0,0,0,0.04)",
-                  }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontWeight: 700, fontSize: 14, color: "#1e293b", lineHeight: 1.3 }}>{c.name}</div>
-                        {c.location && <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>{c.location}</div>}
-                      </div>
-                      <button
-                        onClick={() => handleDeleteCollege(c.id)}
-                        title="Remove college"
-                        style={{
-                          background: "none", border: "none", color: "#d1d5db",
-                          fontSize: 16, cursor: "pointer", marginLeft: 8, flexShrink: 0,
-                        }}
-                        onMouseOver={e => (e.currentTarget.style.color = "#ef4444")}
-                        onMouseOut={e => (e.currentTarget.style.color = "#d1d5db")}
-                      >×</button>
-                    </div>
-                    <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 8 }}>
-                      {colDeadlines.length} deadline{colDeadlines.length !== 1 ? "s" : ""}
-                      {nextDeadline && (
-                        <span style={{ color: getUrgency(nextDeadline.date).color }}>
-                          {" · Next: "}{getUrgency(nextDeadline.date).label}
-                        </span>
-                      )}
-                    </div>
-                    <button
-                      onClick={() => openAddDeadline(c)}
-                      style={{
-                        width: "100%", padding: "7px 0", borderRadius: 8, border: "none",
-                        background: "linear-gradient(135deg, #6366f1, #8b5cf6)",
-                        color: "#fff", fontSize: 12, fontWeight: 700,
-                      }}
-                    >
-                      + Add Deadline
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-      </main>
-
-      {/* ── Add College Modal ───────────────────────────────────────────────── */}
-      {showAddCollege && (
-        <Modal title="Add College" onClose={() => setShowAddCollege(false)}>
-          <p style={{ fontSize: 14, color: "#64748b", marginBottom: 16 }}>
-            Search our list or type any college name.
-          </p>
-          <CollegeSearch
-            value={addSearch}
-            onChange={v => { setAddSearch(v); setAddCollegeName(v); }}
-            onSelect={(name, loc) => { setAddCollegeName(name); setAddCollegeLocation(loc); setAddSearch(name); }}
-            placeholder="Search college…"
-          />
-          {addCollegeName && (
-            <div style={{ marginTop: 12 }}>
-              <label style={{ fontSize: 13, fontWeight: 600, color: "#374151", display: "block", marginBottom: 6 }}>
-                Location (optional)
-              </label>
-              <input
-                type="text"
-                value={addCollegeLocation}
-                onChange={e => setAddCollegeLocation(e.target.value)}
-                placeholder="City, State"
-                style={{
-                  width: "100%", padding: "10px 14px", borderRadius: 10,
-                  border: "1.5px solid #e2e8f0", fontSize: 14, outline: "none",
-                }}
-              />
-            </div>
-          )}
-          <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
-            <button
-              onClick={() => setShowAddCollege(false)}
-              style={{
-                flex: 1, padding: "11px", borderRadius: 10,
-                border: "1.5px solid #e2e8f0", background: "#fff",
-                color: "#374151", fontWeight: 600, fontSize: 14,
-              }}
-            >Cancel</button>
-            <button
-              onClick={handleAddCollege}
-              disabled={!addCollegeName.trim() && !addSearch.trim()}
-              style={{
-                flex: 2, padding: "11px", borderRadius: 10, border: "none",
-                background: (!addCollegeName.trim() && !addSearch.trim()) ? "#e2e8f0" : "linear-gradient(135deg, #6366f1, #8b5cf6)",
-                color: (!addCollegeName.trim() && !addSearch.trim()) ? "#94a3b8" : "#fff",
-                fontWeight: 700, fontSize: 14,
-              }}
-            >Add College</button>
-          </div>
-        </Modal>
-      )}
-
-      {/* ── Add Deadline Modal ──────────────────────────────────────────────── */}
-      {showAddDeadline && (
-        <Modal title="Add Deadline" onClose={() => setShowAddDeadline(false)}>
-          <form onSubmit={handleAddDeadline}>
-            <div style={{ marginBottom: 16 }}>
-              <label style={{ fontSize: 13, fontWeight: 600, color: "#374151", display: "block", marginBottom: 6 }}>
-                College *
-              </label>
-              {colleges.length === 0 ? (
-                <p style={{ fontSize: 14, color: "#ef4444" }}>Add a college first.</p>
-              ) : (
-                <select
-                  value={dlCollege?.id ?? ""}
-                  onChange={e => {
-                    const c = colleges.find(c => c.id === e.target.value) ?? null;
-                    setDlCollege(c);
-                  }}
-                  style={{
-                    width: "100%", padding: "10px 14px", borderRadius: 10,
-                    border: "1.5px solid #e2e8f0", fontSize: 14, outline: "none",
-                    background: "#fff", color: dlCollege ? "#1e293b" : "#94a3b8",
-                  }}
-                >
-                  <option value="">Select a college…</option>
-                  {colleges.map(c => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
-                </select>
-              )}
-            </div>
-
-            <div style={{ marginBottom: 16 }}>
-              <label style={{ fontSize: 13, fontWeight: 600, color: "#374151", display: "block", marginBottom: 6 }}>
-                Deadline Type *
-              </label>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                {(["EA", "ED", "RD", "Scholarship"] as DeadlineType[]).map(t => {
-                  const badge = getDeadlineTypeBadge(t);
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: "16px" }}>
+                {filteredColleges.map((college) => {
+                  const selected = selectedColleges.includes(college.id);
                   return (
-                    <button
-                      key={t}
-                      type="button"
-                      onClick={() => setDlType(t)}
-                      style={{
-                        padding: "10px 0", borderRadius: 10,
-                        border: `2px solid ${dlType === t ? badge.color : "#e2e8f0"}`,
-                        background: dlType === t ? badge.bg : "#fff",
-                        color: dlType === t ? badge.color : "#64748b",
-                        fontWeight: 700, fontSize: 14, transition: "all 0.15s",
-                      }}
+                    <div
+                      key={college.id}
+                      onClick={() => toggleCollege(college.id)}
+                      style={{ background: "white", border: `2px solid ${selected ? "#2563eb" : "#e5e7eb"}`, borderRadius: "14px", padding: "18px", cursor: "pointer", transition: "all 0.2s", boxShadow: selected ? "0 4px 20px rgba(37,99,235,0.15)" : "0 2px 8px rgba(0,0,0,0.05)", transform: selected ? "translateY(-2px)" : "none" }}
                     >
-                      {t}
-                      <div style={{ fontSize: 10, fontWeight: 400, opacity: 0.8, marginTop: 2 }}>
-                        {t === "EA" ? "Early Action" : t === "ED" ? "Early Decision" : t === "RD" ? "Regular Decision" : "Scholarship"}
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "8px" }}>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontWeight: "700", fontSize: "15px", color: "#1e3a5f", marginBottom: "2px" }}>{college.name}</div>
+                          <div style={{ fontSize: "13px", color: "#6b7280" }}>{college.location}</div>
+                        </div>
+                        <div style={{ width: "24px", height: "24px", borderRadius: "50%", background: selected ? "#2563eb" : "#f3f4f6", border: `2px solid ${selected ? "#2563eb" : "#d1d5db"}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginLeft: "8px" }}>
+                          {selected && <span style={{ color: "white", fontSize: "12px", fontWeight: "700" }}>✓</span>}
+                        </div>
                       </div>
-                    </button>
+                      <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                        <span style={{ padding: "3px 8px", background: "#f3f4f6", borderRadius: "6px", fontSize: "11px", color: "#6b7280", fontWeight: "600" }}>{college.type}</span>
+                        {college.deadlines.map((dl) => {
+                          const badge = deadlineTypeBadgeColor(dl.type);
+                          return (
+                            <span key={dl.type + dl.date} style={{ padding: "3px 8px", background: badge.bg, color: badge.text, borderRadius: "6px", fontSize: "11px", fontWeight: "700" }}>{dl.type}</span>
+                          );
+                        })}
+                      </div>
+                    </div>
                   );
                 })}
               </div>
-            </div>
 
-            <div style={{ marginBottom: 16 }}>
-              <label style={{ fontSize: 13, fontWeight: 600, color: "#374151", display: "block", marginBottom: 6 }}>
-                Deadline Date *
-              </label>
-              <input
-                type="date"
-                required
-                value={dlDate}
-                onChange={e => setDlDate(e.target.value)}
-                style={{
-                  width: "100%", padding: "10px 14px", borderRadius: 10,
-                  border: "1.5px solid #e2e8f0", fontSize: 14, outline: "none",
-                }}
-              />
-            </div>
+              {selectedColleges.length > 0 && (
+                <div style={{ marginTop: "24px", textAlign: "center" }}>
+                  <button
+                    onClick={() => setOnboardingStep(1)}
+                    style={{ padding: "14px 40px", background: "linear-gradient(135deg, #1e3a5f, #2563eb)", color: "white", border: "none", borderRadius: "12px", fontSize: "16px", fontWeight: "700", cursor: "pointer" }}
+                  >
+                    Next: Set Up Alerts ({selectedColleges.length} schools) →
+                  </button>
+                </div>
+              )}
+            </>
+          )}
 
-            <div style={{ marginBottom: 20 }}>
-              <label style={{ fontSize: 13, fontWeight: 600, color: "#374151", display: "block", marginBottom: 6 }}>
-                Notes (optional)
-              </label>
-              <input
-                type="text"
-                value={dlNotes}
-                onChange={e => setDlNotes(e.target.value)}
-                placeholder="e.g. Portal-only, need 3 recs…"
-                style={{
-                  width: "100%", padding: "10px 14px", borderRadius: 10,
-                  border: "1.5px solid #e2e8f0", fontSize: 14, outline: "none",
-                }}
-              />
-            </div>
-
-            {dlError && (
-              <div style={{
-                background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 8,
-                padding: "9px 14px", fontSize: 13, color: "#dc2626", marginBottom: 14,
-              }}>
-                {dlError}
+          {onboardingStep === 1 && (
+            <>
+              <div style={{ marginBottom: "32px" }}>
+                <button onClick={() => setOnboardingStep(0)} style={{ background: "none", border: "none", color: "#6b7280", cursor: "pointer", fontSize: "14px", marginBottom: "12px", padding: 0 }}>← Back</button>
+                <h2 style={{ fontSize: "28px", fontWeight: "800", color: "#1e3a5f", margin: "0 0 8px 0" }}>Configure Your Alerts</h2>
+                <p style={{ color: "#6b7280", margin: 0, fontSize: "16px" }}>We'll remind you 30 days, 7 days, and 1 day before each deadline.</p>
               </div>
-            )}
 
-            <div style={{ display: "flex", gap: 10 }}>
-              <button
-                type="button"
-                onClick={() => setShowAddDeadline(false)}
-                style={{
-                  flex: 1, padding: "11px", borderRadius: 10,
-                  border: "1.5px solid #e2e8f0", background: "#fff",
-                  color: "#374151", fontWeight: 600, fontSize: 14,
-                }}
-              >Cancel</button>
-              <button
-                type="submit"
-                style={{
-                  flex: 2, padding: "11px", borderRadius: 10, border: "none",
-                  background: "linear-gradient(135deg, #6366f1, #8b5cf6)",
-                  color: "#fff", fontWeight: 700, fontSize: 14,
-                  boxShadow: "0 3px 10px rgba(99,102,241,0.3)",
-                }}
-              >Save Deadline</button>
-            </div>
-          </form>
-        </Modal>
-      )}
-    </div>
-  );
-}
+              <div style={{ background: "white", borderRadius: "16px", padding: "24px", marginBottom: "24px", border: "2px solid #e5e7eb", boxShadow: "0 2px 8px rgba(0,0,0,0.05)" }}>
+                <h3 style={{ margin: "0 0 16px 0", color: "#1e3a5f", fontWeight: "700" }}>📱 SMS Alerts (Optional)</h3>
+                <p style={{ color: "#6b7280", fontSize: "14px", margin: "0 0 12px 0" }}>Add your phone number to receive text reminders. Note: SMS sending requires additional setup.</p>
+                <input
+                  type="tel"
+                  placeholder="+1 (555) 000-0000"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  style={{ width: "100%", padding: "12px 14px", border: "2px solid #e5e7eb", borderRadius: "10px", fontSize: "15px", outline: "none", boxSizing: "border-box" }}
+                />
+              </div>
 
-// ─── Modal wrapper ────────────────────────────────────────────────────────────
+              <div style={{ background: "white", borderRadius: "16px", padding: "24px", marginBottom: "24px", border: "2px solid #e5e7eb" }}>
+                <h3 style={{ margin: "0 0 20px 0", color: "#1e3a5f", fontWeight: "700" }}>🔔 Default Alert Settings</h3>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "16px" }}>
+                  {[
+                    { key: "email30" as keyof AlertPrefs, label: "📧 Email — 30 days before" },
+                    { key: "sms30" as keyof AlertPrefs, label: "💬 SMS — 30 days before" },
+                    { key: "email7" as keyof AlertPrefs, label: "📧 Email — 7 days before" },
+                    { key: "sms7" as keyof AlertPrefs, label: "💬 SMS — 7 days before" },
+                    { key: "email1" as keyof AlertPrefs, label: "📧 Email — 1 day before" },
+                    { key: "sms1" as keyof AlertPrefs, label: "💬 SMS — 1 day before" },
+                  ].map(({ key, label }) => {
+                    const globalPref = alertPrefsMap["__global__"] || defaultAlertPrefs;
+                    return (
+                      <label key={key} style={{ display: "flex", alignItems: "center", gap: "10px", cursor: "pointer", padding: "12px", background: "#f8fafc", borderRadius: "10px" }}>
+                        <div
+                          onClick={() => {
+                            const current = globalPref[key];
+                            const updated = { ...alertPrefsMap, "__global__": { ...globalPref, [key]: !current } };
+                            setAlertPrefsMap(updated);
+                          }}
+                          style={{ width: "20px", height: "20px", borderRadius: "5px", border: `2px solid ${globalPref[key] ? "#2563eb" : "#d1d5db"}`, background: globalPref[key] ? "#2563eb" : "white", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, cursor: "pointer" }}
+                        >
+                          {globalPref[key] && <span style={{ color: "white", fontSize: "12px" }}>✓</span>}
+                        </div>
+                        <span style={{ fontSize: "14px", color: "#374151" }}>{label}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+                <p style={{ margin: "16px 0 0 0", color: "#9ca3af", fontSize: "13px" }}>These apply to all your schools. You can customize per-school from the dashboard.</p>
+              </div>
 
-function Modal({
-  title,
-  children,
-  onClose,
-}: {
-  title: string;
-  children: React.ReactNode;
-  onClose: () => void;
-}) {
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+              <div style={{ background: "#eff6ff", border: "2px solid #bfdbfe", borderRadius: "14px", padding: "20px", marginBottom: "24px" }}>
+                <h4 style={{ margin: "0 0 12px 0", color: "#1d4ed8", fontWeight: "700" }}>📋 Your Selected Schools ({selectedColleges.length})</h4>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+                  {selectedColleges.map((id) => {
+                    const c = COLLEGES.find((x) => x.id === id);
+                    return c ? (
+                      <span key={id} style={{ padding: "6px 12px", background: "white", border: "1px solid #bfdbfe", borderRadius: "20px", fontSize: "13px", fontWeight: "600", color: "#1d4ed8" }}>
+                        {c.name}
+                      </span>
+                    ) : null;
+                  })}
+                </div>
+              </div>
 
-  return (
-    <div
-      style={{
-        position: "fixed", inset: 0, zIndex: 200,
-        background: "rgba(15,23,42,0.45)",
-        display: "flex", alignItems: "center", justifyContent: "center",
-        padding: 16,
-      }}
-      onClick={e => { if (e.target === e.currentTarget) onClose(); }}
-    >
-      <div
-        style={{
-          background: "#fff", borderRadius: 20, padding: "28px 28px 24px",
-          width: "100%", maxWidth: 460,
-          boxShadow: "0 24px 64px rgba(0,0,0,0.18)",
-        }}
-        className="fade-in"
-      >
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
-          <h2 style={{ fontSize: 18, fontWeight: 800, color: "#1e293b" }}>{title}</h2>
-          <button
-            onClick={onClose}
-            style={{
-              width: 30, height: 30, borderRadius: "50%", border: "none",
-              background: "#f1f5f9", color: "#64748b", fontSize: 18, lineHeight: 1,
-              display: "flex", alignItems: "center", justifyContent: "center",
-            }}
-          >×</button>
+              <div style={{ textAlign: "center" }}>
+                <button
+                  onClick={saveSelections}
+                  style={{ padding: "14px 48px", background: "linear-gradient(135deg, #1e3a5f, #2563eb)", color: "white", border: "none", borderRadius: "12px", fontSize: "16px", fontWeight: "700", cursor: "pointer" }}
+                >
+                  🚀 Go to My Dashboard
+                </button>
+              </div>
+            </>
+          )}
         </div>
-        {children}
       </div>
-    </div>
-  );
+    );
+  }
+
+  if (view === "dashboard" || view === "alerts" || view === "profile") {
+    return (
+      <div style={{ minHeight: "100vh", background: "#f8fafc", fontFamily: "'Inter', system-ui, sans-serif" }}>
+        {/* Header */}
+        <div style={{ background: "linear-gradient(135deg, #1e3a5f 0%, #2563eb 100%)", padding: "0", color: "white" }}>
+          <div style={{ maxWidth: "1100px", margin: "0 auto", padding: "16px 24px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+              <span style={{ fontSize: "24px" }}>🎓</span>
+              <span style={{ fontSize: "20px", fontWeight: "800" }}>Edutracker</span>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <span style={{ fontSize: "13px", opacity: 0.8, marginRight: "8px" }}>{userEmail}</span>
+              {nextDeadline && (
+                <div style={{ padding: "6px 14px", background: "rgba(255,255,255,0.15)", borderRadius: "20px", fontSize: "13px", fontWeight: "600" }}>
+                  Next: {nextDeadline.collegeName} in {nextDeadline.daysUntil}d
+                </div>
+              )}
+              <button
+                onClick={handleLogout}
+                style={{ padding: "8px 16px", background: "rgba(255,255,255,0.15)", color: "white", border: "1px solid rgba(255,255,255,0.3)", borderRadius: "8px", cursor: "pointer", fontSize: "13px", fontWeight: "600" }}
+              >
+                Log Out
+              </button>
+            </div>
+          </div>
+
+          {/* Nav */}
+          <div style={{ maxWidth: "1100px", margin: "0 auto", padding: "0 24px", display: "flex", gap: "4px" }}>
+            {(["dashboard", "alerts", "profile"] as View[]).map((v) => (
+              <button
+                key={v}
+                onClick={() => setView(v)}
+                style={{ padding: "12px 20px", background: view === v ? "rgba(255,255,255,0.2)" : "transparent", color: "white", border: "none", borderBottom: view === v ? "3px solid white" : "3px solid transparent", cursor: "pointer", fontSize: "14px", fontWeight: view === v ? "700" : "500", transition: "all 0.2s", textTransform: "capitalize" }}
+              >
+                {v === "dashboard" ? "📅 Dashboard" : v === "alerts" ? "🔔 Alerts" : "👤 Profile"}
+              </button>
+            ))}
+            <button
+              onClick={() => { setOnboardingStep(0); setView("onboarding"); }}
+              style={{ padding: "12px 20px", background: "transparent", color: "rgba(255,255,255,0.7)", border: "none", borderBottom: "3px solid transparent", cursor: "pointer", fontSize: "14px", fontWeight: "500" }}
+            >
+              + Add Schools
+            </button>
+          </div>
+        </div>
+
+        <div style={{ maxWidth: "1100px", margin: "0 auto", padding: "32px 24px" }}>
+          {/* DASHBOARD VIEW */}
+          {view === "dashboard" && (
+            <>
+              {/* Stats */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "16px", marginBottom: "32px" }}>
+                {[
+                  { label: "Schools Tracked", value: selectedColleges.length, icon: "🏫", color: "#eff6ff", border: "#bfdbfe", text: "#1d4ed8" },
+                  { label: "Upcoming Deadlines", value: upcomingDeadlines.length, icon: "📅", color: "#f0fdf4", border: "#bbf7d0", text: "#15803d" },
+                  { label: "Due in 30 Days", value: upcomingDeadlines.filter((d) => d.daysUntil <= 30).length, icon: "⚡", color: "#fefce8", border: "#fde68a", text: "#a16207" },
+                  { label: "Due This Week", value: upcomingDeadlines.filter((d) => d.daysUntil <= 7).length, icon: "🚨", color: "#fef2f2", border: "#fecaca", text: "#dc2626" },
+                ].map((stat) => (
+                  <div key={stat.label} style={{ background: stat.color, border: `2px solid ${stat.border}`, borderRadius: "14px", padding: "20px", display: "flex", alignItems: "center", gap: "14px" }}>
+                    <span style={{ fontSize: "28px" }}>{stat.icon}</span>
+                    <div>
+                      <div style={{ fontSize: "28px", fontWeight: "800", color: stat.text }}>{stat.value}</div>
+                      <div style={{ fontSize: "12px", color: stat.text, opacity: 0.8, fontWeight: "600" }}>{stat.label}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Filters */}
+              <div style={{ display: "flex", gap: "12px", marginBottom: "24px", flexWrap: "wrap", alignItems: "center" }}>
+                <div style={{ display: "flex", background: "white", border: "2px solid #e5e7eb", borderRadius: "10px", overflow: "hidden" }}>
+                  {(["upcoming", "past"] as const).map((tab) => (
+                    <button
+                      key={tab}
+                      onClick={() => setActiveTab(tab)}
+                      style={{ padding: "10px 20px", background: activeTab === tab ? "#1e3a5f" : "transparent", color: activeTab === tab ? "white" : "#6b7280", border: "none", cursor: "pointer", fontWeight: "600", fontSize: "14px", transition: "all 0.2s" }}
+                    >
+                      {tab === "upcoming" ? "Upcoming" : "Past"}
+                    </button>
+                  ))}
+                </div>
+                <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                  {["All", "EA", "ED", "ED2", "RD", "Scholarship"].map((type) => {
+                    const badge = type !== "All" ? deadlineTypeBadgeColor(type) : { bg: "#f3f4f6", text: "#374151" };
+                    return (
+                      <button
+                        key={type}
+                        onClick={() => setDashboardFilter(type)}
+                        style={{ padding: "8px 16px", background: dashboardFilter === type ? badge.text : badge.bg, color: dashboardFilter === type ? "white" : badge.text, border: `2px solid ${badge.text}20`, borderRadius: "20px", cursor: "pointer", fontWeight: "600", fontSize: "13px", transition: "all 0.2s" }}
+                      >
+                        {type}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Deadline List */}
+              {displayDeadlines.length === 0 ? (
+                <div style={{ textAlign: "center", padding: "60px 20px", background: "white", borderRadius: "16px", border: "2px dashed #e5e7eb" }}>
+                  <div style={{ fontSize: "48px", marginBottom: "16px" }}>🎉</div>
+                  <h3 style={{ color: "#1e3a5f", margin: "0 0 8px 0" }}>{activeTab === "upcoming" ? "No upcoming deadlines!" : "No past deadlines."}</h3>
+                  <p style={{ color: "#6b7280", margin: "0 0 20px 0" }}>{activeTab === "upcoming" ? "Add more schools to track their deadlines." : "Your upcoming deadlines will appear here after they pass."}</p>
+                  {activeTab === "upcoming" && (
+                    <button onClick={() => { setOnboardingStep(0); setView("onboarding"); }} style={{ padding: "12px 28px", background: "#2563eb", color: "white", border: "none", borderRadius: "10px", cursor: "pointer", fontWeight: "600" }}>+ Add Schools</button>
+                  )}
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                  {displayDeadlines.map((dl, idx) => {
+                    const badge = deadlineTypeBadgeColor(dl.deadlineType);
+                    const days = dl.daysUntil;
+                    const urgBg = urgencyBg(days);
+                    const urgColor = urgencyColor(days);
+                    return (
+                      <div
+                        key={`${dl.collegeId}-${dl.deadlineType}-${dl.date}-${idx}`}
+                        style={{ background: "white", borderRadius: "14px", padding: "20px 24px", border: `2px solid ${days <= 7 && days >= 0 ? urgColor + "40" : "#e5e7eb"}`, boxShadow: "0 2px 8px rgba(0,0,0,0.05)", display: "flex", alignItems: "center", gap: "16px", transition: "all 0.2s" }}
+                      >
+                        <div style={{ width: "56px", height: "56px", borderRadius: "12px", background: urgBg, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", flexShrink: 0, border: `2px solid ${urgColor}30` }}>
+                          <span style={{ fontSize: "18px", fontWeight: "800", color: urgColor, lineHeight: 1 }}>{days < 0 ? "✓" : days === 0 ? "!" : days}</span>
+                          {days >= 0 && <span style={{ fontSize: "9px", color: urgColor, fontWeight: "700", lineHeight: 1 }}>{days === 0 ? "TODAY" : days === 1 ? "DAY" : "DAYS"}</span>}
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px", flexWrap: "wrap" }}>
+                            <span style={{ fontWeight: "700", fontSize: "16px", color: "#1e3a5f" }}>{dl.collegeName}</span>
+                            <span style={{ padding: "2px 8px", background: badge.bg, color: badge.text, borderRadius: "6px", fontSize: "12px", fontWeight: "700" }}>{dl.deadlineType}</span>
+                            {days <= 1 && days >= 0 && <span style={{ padding: "2px 8px", background: "#fef2f2", color: "#ef4444", borderRadius: "6px", fontSize: "11px", fontWeight: "700" }}>🚨 URGENT</span>}
+                          </div>
+                          <div style={{ fontSize: "14px", color: "#6b7280", marginBottom: "2px" }}>{dl.deadlineLabel}</div>
+                          {dl.notes && <div style={{ fontSize: "12px", color: "#9ca3af" }}>ℹ️ {dl.notes}</div>}
+                        </div>
+                        <div style={{ textAlign: "right", flexShrink: 0 }}>
+                          <div style={{ fontWeight: "700", color: "#1e3a5f", fontSize: "15px" }}>{formatDate(dl.date)}</div>
+                          <div style={{ fontSize: "12px", color: days < 0 ? "#9ca3af" : urgColor, fontWeight: "600", marginTop: "2px" }}>
+                            {days < 0 ? "Passed" : days === 0 ? "Due today!" : days === 1 ? "Due tomorrow!" : `${days} days left`}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </>
+          )}
+
+          {/* ALERTS VIEW */}
+          {view === "alerts" && (
+            <>
+              <div style={{ marginBottom: "32px" }}>
+                <h2 style={{ fontSize: "26px", fontWeight: "800", color: "#1e3a5f", margin: "0 0 8px 0" }}>🔔 Alert Preferences</h2>
+                <p style={{ color: "#6b7280", margin: 0 }}>Customize when you want to be notified for each school. Alerts go out at 30, 7, and 1 day before each deadline.</p>
+              </div>
+
+              <div style={{ background: "#fffbeb", border: "2px solid #fde68a", borderRadius: "14px", padding: "18px 20px", marginBottom: "24px" }}>
+                <h4 style={{ margin: "0 0 6px 0", color: "#92400e", fontWeight: "700" }}>📧 Email Alerts</h4>
+                <p style={{ margin: 0, color: "#78350f", fontSize: "14px" }}>Email reminders will be sent to <strong>{userEmail}</strong>. Phone: {phone || "Not set — add in Profile"}</p>
+              </div>
+
+              {selectedColleges.length === 0 ? (
+                <div style={{ textAlign: "center", padding: "48px", background: "white", borderRadius: "16px", border: "2px dashed #e5e7eb" }}>
+                  <p style={{ color: "#6b7280" }}>No schools selected. <button onClick={() => { setOnboardingStep(0); setView("onboarding"); }} style={{ background: "none", border: "none", color: "#2563eb", cursor: "pointer", fontWeight: "600" }}>Add schools →</button></p>
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+                  {selectedColleges.map((id) => {
+                    const college = COLLEGES.find((c) => c.id === id);
+                    if (!college) return null;
+                    const prefs = alertPrefsMap[id] || defaultAlertPrefs;
+                    return (
+                      <div key={id} style={{ background: "white", borderRadius: "14px", padding: "22px 24px", border: "2px solid #e5e7eb", boxShadow: "0 2px 8px rgba(0,0,0,0.05)" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "18px", flexWrap: "wrap", gap: "8px" }}>
+                          <div>
+                            <h3 style={{ margin: "0 0 4px 0", color: "#1e3a5f", fontWeight: "700", fontSize: "17px" }}>{college.name}</h3>
+                            <div style={{ fontSize: "13px", color: "#6b7280" }}>{college.location} · {college.type}</div>
+                          </div>
+                          <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                            {college.deadlines.map((dl) => {
+                              const badge = deadlineTypeBadgeColor(dl.type);
+                              const days = daysUntil(dl.date);
+                              return (
+                                <span key={dl.type + dl.date} style={{ padding: "4px 10px", background: badge.bg, color: badge.text, borderRadius: "8px", fontSize: "12px", fontWeight: "700" }}>
+                                  {dl.type}: {formatDate(dl.date)} {days >= 0 ? `(${days}d)` : "(past)"}
+                                </span>
+                              );
+                            })}
+                          </div>
+                        </div>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "12px" }}>
+                          {[
+                            { key: "email30" as keyof AlertPrefs, label: "📧 Email", sub: "30 days" },
+                            { key: "email7" as keyof AlertPrefs, label: "📧 Email", sub: "7 days" },
+                            { key: "email1" as keyof AlertPrefs, label: "📧 Email", sub: "1 day" },
+                            { key: "sms30" as keyof AlertPrefs, label: "💬 SMS", sub: "30 days" },
+                            { key: "sms7" as keyof AlertPrefs, label: "💬 SMS", sub: "7 days" },
+                            { key: "sms1" as keyof AlertPrefs, label: "💬 SMS", sub: "1 day" },
+                          ].map(({ key, label, sub }) => (
+                            <label
+                              key={key}
+                              onClick={() => updateAlertPref(id, key, !prefs[key])}
+                              style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer", padding: "10px 12px", background: prefs[key] ? "#eff6ff" : "#f9fafb", borderRadius: "10px", border: `2px solid ${prefs[key] ? "#bfdbfe" : "#e5e7eb"}`, transition: "all 0.2s" }}
+                            >
+                              <div style={{ width: "18px", height: "18px", borderRadius: "4px", border: `2px solid ${prefs[key] ? "#2563eb" : "#d1d5db"}`, background: prefs[key] ? "#2563eb" : "white", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                                {prefs[key] && <span style={{ color: "white", fontSize: "10px" }}>✓</span>}
+                              </div>
+                              <div>
+                                <div style={{ fontSize: "12px", fontWeight: "600", color: prefs[key] ? "#1d4ed8" : "#374151" }}>{label}</div>
+                                <div style={{ fontSize: "11px", color: "#9ca3af" }}>{sub} before</div>
+                              </div>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </>
+          )}
+
+          {/* PROFILE VIEW */}
+          {view === "profile" && (
+            <>
+              <div style={{ marginBottom: "32px" }}>
+                <h2 style={{ fontSize: "26px", fontWeight: "800", color: "#1e3a5f", margin: "0 0 8px 0" }}>👤 Your Profile</h2>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "20px" }}>
+                <div style={{ background: "white", borderRadius: "16px", padding: "28px", border: "2px solid #e5e7eb", boxShadow: "0 2px 8px rgba(0,0,0,0.05)" }}>
+                  <h3 style={{ margin: "0 0 20px 0", color: "#1e3a5f", fontWeight: "700" }}>Account Info</h3>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+                    <div>
+                      <label style={{ fontSize: "13px", fontWeight: "600", color: "#6b7280", display: "block", marginBottom: "6px" }}>Email Address</label>
+                      <div style={{ padding: "12px 14px", background: "#f8fafc", border: "2px solid #e5e7eb", borderRadius: "10px", fontSize: "15px", color: "#374151" }}>{userEmail}</div>
+                    </div>
+                    <div>
+                      <label style={{ fontSize: "13px", fontWeight: "600", color: "#6b7280", display: "block", marginBottom: "6px" }}>Phone Number (for SMS)</label>
+                      <input
+                        type="tel"
+                        value={phone}
+                        onChange={(e) => setPhone(e.target.value)}
+                        placeholder="+1 (555) 000-0000"
+                        style={{ width: "100%", padding: "12px 14px", border: "2px solid #e5e7eb", borderRadius: "10px", fontSize: "15px", outline: "none", boxSizing: "border-box" }}
+                      />
+                      <button
+                        onClick={() => { localStorage.setItem("edutracker_phone", phone); alert("Phone number saved!"); }}
+                        style={{ marginTop: "10px", padding: "10px 20px", background: "#2563eb", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontWeight: "600", fontSize: "14px" }}
+                      >
+                        Save Phone Number
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ background: "white", borderRadius: "16px", padding: "28px", border: "2px solid #e5e7eb", boxShadow: "0 2px 8px rgba(0,0,0,0.05)" }}>
+                  <h3 style={{ margin: "0 0 20px 0", color: "#1e3a5f", fontWeight: "700" }}>My Schools ({selectedColleges.length})</h3>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "10px", maxHeight: "300px", overflowY: "auto" }}>
+                    {selectedColleges.map((id) => {
+                      const c = COLLEGES.find((x) => x.id === id);
+                      return c ? (
+                        <div key={id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", background: "#f8fafc", borderRadius: "10px", border: "1px solid #e5e7eb" }}>
+                          <div>
+                            <div style={{ fontWeight: "600", fontSize: "14px", color: "#1e3a5f" }}>{c.name}</div>
+                            <div style={{ fontSize: "12px", color: "#9ca3af" }}>{c.location}</div>
+                          </div>
+                          <button
+                            onClick={() => {
+                              const updated = selectedColleges.filter((x) => x !== id);
+                              setSelectedColleges(updated);
+                              localStorage.setItem("edutracker_colleges", JSON.stringify(updated));
+                            }}
+                            style={{ padding: "4px 10px", background: "#fef2f2", color: "#dc2626", border: "1px solid #fecaca", borderRadius: "6px", cursor: "pointer", fontSize: "12px", fontWeight: "600" }}
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      ) : null;
+                    })}
+                    {selectedColleges.length === 0 && <p style={{ color: "#9ca3af", fontSize: "14px" }}>No schools added yet.</p>}
+                  </div>
+                  <button
+                    onClick={() => { setOnboardingStep(0); setView("onboarding"); }}
+                    style={{ marginTop: "16px", padding: "10px 20px", background: "#eff6ff", color: "#2563eb", border: "2px solid #bfdbfe", borderRadius: "8px", cursor: "pointer", fontWeight: "600", fontSize: "14px" }}
+                  >
+                    + Add More Schools
+                  </button>
+                </div>
+
+                <div style={{ background: "white", borderRadius: "16px", padding: "28px", border: "2px solid #e5e7eb", boxShadow: "0 2px 8px rgba(0,0,0,0.05)" }}>
+                  <h3 style={{ margin: "0 0 20px 0", color: "#1e3a5f", fontWeight: "700" }}>Alert Summary</h3>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                    {[
+                      { label: "Due today", value: upcomingDeadlines.filter((d) => d.daysUntil === 0).length, color: "#ef4444" },
+                      { label: "Due tomorrow", value: upcomingDeadlines.filter((d) => d.daysUntil === 1).length, color: "#f97316" },
+                      { label: "Due in 7 days", value: upcomingDeadlines.filter((d) => d.daysUntil > 1 && d.daysUntil <= 7).length, color: "#f97316" },
+                      { label: "Due in 30 days", value: upcomingDeadlines.filter((d) => d.daysUntil > 7 && d.daysUntil <= 30).length, color: "#eab308" },
+                      { label: "Due after 30 days", value: upcomingDeadlines.filter((d) => d.daysUntil > 30).length, color: "#22c55e" },
+                    ].map((item) => (
+                      <div key={item.label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", background: "#f8fafc", borderRadius: "10px" }}>
+                        <span style={{ fontSize: "14px", color: "#374151" }}>{item.label}</span>
+                        <span style={{ fontWeight: "700", color: item.color, fontSize: "18px" }}>{item.value}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <button
+                    onClick={handleLogout}
+                    style={{ marginTop: "20px", width: "100%", padding: "12px", background: "#fef2f2", color: "#dc2626", border: "2px solid #fecaca", borderRadius: "10px", cursor: "pointer", fontWeight: "600", fontSize: "14px" }}
+                  >
+                    Log Out
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return null;
 }
