@@ -2,8 +2,10 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Edutracker — College Deadline Tracker",
-  description: "Track EA, ED, RD, and scholarship deadlines for the top 200 US colleges. Never miss a college application deadline.",
+  title: "EduTracker — Never Miss a College Deadline",
+  description:
+    "Track all your college application deadlines in one place. EA, ED, RD, and scholarship deadlines for the top 100 US colleges.",
+  icons: { icon: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎓</text></svg>" },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
