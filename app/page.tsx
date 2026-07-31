@@ -5,56 +5,33 @@ import { useState, useEffect } from "react";
 const LOGO_URL =
   "https://kobwhnsy46wia1ga.public.blob.vercel-storage.com/olympus/MHzFM0XwMRAKcI38/ms9ar2f7-ee744c62-792d-4a40-9a12-3f39cebb7464-removebg-preview-3C58eOMxvVC76P595ELS8vavDN1zzQ.png";
 
-const POPULAR_SCHOOLS = [
-  "Harvard University",
-  "MIT",
-  "Stanford University",
-  "Yale University",
-  "Princeton University",
-  "Columbia University",
-  "University of Pennsylvania",
-  "Brown University",
-  "Dartmouth College",
-  "Cornell University",
-  "Duke University",
-  "Johns Hopkins University",
-  "Northwestern University",
-  "Georgetown University",
-  "University of Michigan",
-  "UC Berkeley",
-  "UCLA",
-  "University of Virginia",
-  "Carnegie Mellon University",
-  "Vanderbilt University",
-  "Emory University",
-  "NYU",
-  "Boston College",
-  "Tufts University",
-  "Wake Forest University",
-  "Rice University",
-  "University of Notre Dame",
-  "Washington University in St. Louis",
-  "University of Chicago",
-  "Amherst College",
-  "Williams College",
-  "Swarthmore College",
-  "Wellesley College",
-  "Bowdoin College",
-  "Middlebury College",
-  "Hamilton College",
-  "Colby College",
-  "Colgate University",
-  "Lehigh University",
-  "Northeastern University",
-];
+const APP_TYPES = ["Early Decision", "Early Action", "Regular Decision", "Rolling"];
+const APP_TYPE_SHORT: Record<string, string> = {
+  "Early Decision": "ED",
+  "Early Action": "EA",
+  "Regular Decision": "RD",
+  "Rolling": "RO",
+};
 
-const APPLICATION_TYPES = [
-  "Early Decision (ED)",
-  "Early Decision II (ED II)",
-  "Early Action (EA)",
-  "Restrictive Early Action (REA)",
-  "Regular Decision (RD)",
-  "Rolling Admission",
+const SCHOOLS = [
+  "Harvard University", "Yale University", "Princeton University", "MIT",
+  "Stanford University", "Columbia University", "University of Pennsylvania",
+  "Brown University", "Dartmouth College", "Cornell University",
+  "Duke University", "Northwestern University", "Johns Hopkins University",
+  "Vanderbilt University", "Rice University", "Washington University in St. Louis",
+  "Notre Dame", "Georgetown University", "Emory University", "Carnegie Mellon University",
+  "UC Berkeley", "UCLA", "University of Michigan", "University of Virginia",
+  "UNC Chapel Hill", "Boston College", "Tufts University", "NYU",
+  "Boston University", "Northeastern University", "Tulane University",
+  "University of Southern California", "Wake Forest University",
+  "Case Western Reserve University", "University of Rochester",
+  "Rensselaer Polytechnic Institute", "Purdue University",
+  "University of Wisconsin-Madison", "University of Illinois Urbana-Champaign",
+  "Penn State University", "Ohio State University", "University of Florida",
+  "University of Texas at Austin", "Georgia Tech", "University of Georgia",
+  "Arizona State University", "University of Arizona",
+  "University of Colorado Boulder", "University of Washington",
+  "University of Minnesota", "Indiana University", "Michigan State University",
 ];
 
 interface Deadline {
@@ -66,66 +43,75 @@ interface Deadline {
   created_at: string;
 }
 
-type AuthMode = "login" | "signup";
+function getDaysUntil(dateStr: string): number {
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  const d = new Date(dateStr + (dateStr.length === 7 ? "-01" : ""));
+  d.setHours(0, 0, 0, 0);
+  return Math.ceil((d.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+}
+
+function urgencyColor(days: number): string {
+  if (days < 0) return "#9ca3af";
+  if (days <= 7) return "#ef4444";
+  if (days <= 30) return "#f97316";
+  if (days <= 60) return "#eab308";
+  return "#22c55e";
+}
+
+function urgencyLabel(days: number): string {
+  if (days < 0) return "Passed";
+  if (days === 0) return "Today!";
+  if (days === 1) return "Tomorrow!";
+  return `${days} days`;
+}
 
 export default function Home() {
-  const [email, setEmail] = useState<string>("");
-  const [authMode, setAuthMode] = useState<AuthMode>("login");
+  const [email, setEmail] = useState<string | null>(null);
+  const [authMode, setAuthMode] = useState<"login" | "signup">("signup");
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
   const [authError, setAuthError] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
-  const [checkingSession, setCheckingSession] = useState(true);
 
   const [deadlines, setDeadlines] = useState<Deadline[]>([]);
   const [loadingDeadlines, setLoadingDeadlines] = useState(false);
 
-  const [showForm, setShowForm] = useState(false);
+  const [showAdd, setShowAdd] = useState(false);
+  const [editDeadline, setEditDeadline] = useState<Deadline | null>(null);
+
   const [formSchool, setFormSchool] = useState("");
-  const [formSchoolCustom, setFormSchoolCustom] = useState("");
+  const [formSchoolSearch, setFormSchoolSearch] = useState("");
   const [formDate, setFormDate] = useState("");
-  const [formType, setFormType] = useState("");
+  const [formType, setFormType] = useState(APP_TYPES[0]);
   const [formNotes, setFormNotes] = useState("");
-  const [formError, setFormError] = useState("");
   const [formLoading, setFormLoading] = useState(false);
-  const [schoolSuggestions, setSchoolSuggestions] = useState<string[]>([]);
+  const [formError, setFormError] = useState("");
 
-  const [deleteId, setDeleteId] = useState<number | null>(null);
-
-  const [activeTab, setActiveTab] = useState<"upcoming" | "all">("upcoming");
+  const [tab, setTab] = useState<"upcoming" | "all">("upcoming");
 
   useEffect(() => {
+    fetch("/api/auth").then((r) => r.json()).then((d) => {
+      setEmail(d.email || null);
+    });
     fetch("/api/track", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ path: window.location.pathname }),
-    }).catch(() => {});
+    });
   }, []);
 
   useEffect(() => {
-    fetch("/api/auth")
-      .then((r) => r.json())
-      .then((data) => {
-        setEmail(data.email || "");
-        setCheckingSession(false);
-      })
-      .catch(() => setCheckingSession(false));
-  }, []);
-
-  useEffect(() => {
-    if (email) fetchDeadlines();
-    else setDeadlines([]);
+    if (email) loadDeadlines();
   }, [email]);
 
-  async function fetchDeadlines() {
+  async function loadDeadlines() {
     setLoadingDeadlines(true);
-    try {
-      const r = await fetch("/api/deadlines");
-      if (r.ok) {
-        const data = await r.json();
-        setDeadlines(data.deadlines || []);
-      }
-    } catch {}
+    const r = await fetch("/api/deadlines");
+    if (r.ok) {
+      const d = await r.json();
+      setDeadlines(d.deadlines || []);
+    }
     setLoadingDeadlines(false);
   }
 
@@ -133,22 +119,16 @@ export default function Home() {
     e.preventDefault();
     setAuthError("");
     setAuthLoading(true);
-    try {
-      const r = await fetch("/api/auth", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: authMode, email: authEmail, password: authPassword }),
-      });
-      const data = await r.json();
-      if (data.ok) {
-        setEmail(data.email);
-        setAuthEmail("");
-        setAuthPassword("");
-      } else {
-        setAuthError(data.error || "Authentication failed");
-      }
-    } catch {
-      setAuthError("Network error. Please try again.");
+    const r = await fetch("/api/auth", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: authMode, email: authEmail, password: authPassword }),
+    });
+    const d = await r.json();
+    if (d.ok) {
+      setEmail(d.email);
+    } else {
+      setAuthError(d.error || "Something went wrong");
     }
     setAuthLoading(false);
   }
@@ -159,168 +139,189 @@ export default function Home() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ mode: "logout" }),
     });
-    setEmail("");
+    setEmail(null);
     setDeadlines([]);
   }
 
-  function handleSchoolInput(val: string) {
-    setFormSchool(val);
-    if (val.length > 1) {
-      const suggestions = POPULAR_SCHOOLS.filter((s) =>
-        s.toLowerCase().includes(val.toLowerCase())
-      ).slice(0, 6);
-      setSchoolSuggestions(suggestions);
-    } else {
-      setSchoolSuggestions([]);
-    }
+  function openAdd() {
+    setEditDeadline(null);
+    setFormSchool("");
+    setFormSchoolSearch("");
+    setFormDate("");
+    setFormType(APP_TYPES[0]);
+    setFormNotes("");
+    setFormError("");
+    setShowAdd(true);
   }
 
-  async function handleAddDeadline(e: React.FormEvent) {
-    e.preventDefault();
+  function openEdit(d: Deadline) {
+    setEditDeadline(d);
+    setFormSchool(d.school_name);
+    setFormSchoolSearch(d.school_name);
+    setFormDate(d.deadline_date);
+    setFormType(d.application_type);
+    setFormNotes(d.notes);
     setFormError("");
-    const schoolName = formSchool === "__custom__" ? formSchoolCustom : formSchool;
-    if (!schoolName.trim()) {
-      setFormError("Please enter a school name.");
-      return;
-    }
-    if (!formDate) {
-      setFormError("Please select a deadline date.");
-      return;
-    }
-    if (!formType) {
-      setFormError("Please select an application type.");
-      return;
-    }
+    setShowAdd(true);
+  }
+
+  async function handleFormSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!formSchool) { setFormError("Please select or enter a school name."); return; }
+    if (!formDate) { setFormError("Please enter a deadline date."); return; }
     setFormLoading(true);
-    try {
+    setFormError("");
+
+    if (editDeadline) {
       const r = await fetch("/api/deadlines", {
-        method: "POST",
+        method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          school_name: schoolName.trim(),
+          id: editDeadline.id,
+          school_name: formSchool,
           deadline_date: formDate,
           application_type: formType,
           notes: formNotes,
         }),
       });
-      const data = await r.json();
-      if (data.ok) {
-        setDeadlines((prev) =>
-          [...prev, data.deadline].sort(
-            (a, b) => new Date(a.deadline_date).getTime() - new Date(b.deadline_date).getTime()
-          )
-        );
-        setShowForm(false);
-        setFormSchool("");
-        setFormSchoolCustom("");
-        setFormDate("");
-        setFormType("");
-        setFormNotes("");
+      const d = await r.json();
+      if (d.ok) {
+        setShowAdd(false);
+        loadDeadlines();
       } else {
-        setFormError(data.error || "Failed to add deadline.");
+        setFormError(d.error || "Error saving");
       }
-    } catch {
-      setFormError("Network error. Please try again.");
+    } else {
+      const r = await fetch("/api/deadlines", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          school_name: formSchool,
+          deadline_date: formDate,
+          application_type: formType,
+          notes: formNotes,
+        }),
+      });
+      const d = await r.json();
+      if (d.ok) {
+        setShowAdd(false);
+        loadDeadlines();
+      } else {
+        setFormError(d.error || "Error saving");
+      }
     }
     setFormLoading(false);
   }
 
   async function handleDelete(id: number) {
-    setDeleteId(id);
-    try {
-      await fetch(`/api/deadlines?id=${id}`, { method: "DELETE" });
-      setDeadlines((prev) => prev.filter((d) => d.id !== id));
-    } catch {}
-    setDeleteId(null);
+    if (!confirm("Delete this deadline?")) return;
+    await fetch(`/api/deadlines?id=${id}`, { method: "DELETE" });
+    loadDeadlines();
   }
 
-  function daysUntil(dateStr: string) {
-    const deadline = new Date(dateStr + "T23:59:59");
-    const now = new Date();
-    const diff = Math.ceil((deadline.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-    return diff;
-  }
-
-  function formatDate(dateStr: string) {
-    const d = new Date(dateStr + "T12:00:00");
-    return d.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
-  }
-
-  function urgencyColor(days: number) {
-    if (days < 0) return "#9ca3af";
-    if (days <= 7) return "#ef4444";
-    if (days <= 30) return "#f59e0b";
-    return "#10b981";
-  }
-
-  function urgencyLabel(days: number) {
-    if (days < 0) return "Passed";
-    if (days === 0) return "Due Today!";
-    if (days === 1) return "1 day left";
-    return `${days} days left`;
-  }
+  const filteredSchools = formSchoolSearch.length > 0
+    ? SCHOOLS.filter((s) => s.toLowerCase().includes(formSchoolSearch.toLowerCase())).slice(0, 8)
+    : [];
 
   const now = new Date();
-  const upcomingDeadlines = deadlines.filter((d) => new Date(d.deadline_date + "T23:59:59") >= now);
-  const displayedDeadlines = activeTab === "upcoming" ? upcomingDeadlines : deadlines;
+  now.setHours(0, 0, 0, 0);
 
-  // ---- AUTH SCREEN ----
-  if (checkingSession) {
-    return (
-      <div style={styles.loadingScreen}>
-        <img src={LOGO_URL} alt="Edutracker" style={styles.loadingLogo} />
-        <p style={{ color: "#3b82f6", marginTop: 16 }}>Loading…</p>
-      </div>
-    );
-  }
+  const upcomingDeadlines = deadlines.filter((d) => {
+    const days = getDaysUntil(d.deadline_date);
+    return days >= 0;
+  });
+
+  const displayDeadlines = tab === "upcoming" ? upcomingDeadlines : deadlines;
 
   if (!email) {
     return (
-      <div style={styles.authPage}>
-        <div style={styles.authCard}>
-          <img src={LOGO_URL} alt="Edutracker" style={styles.authLogo} />
-          <h1 style={styles.authTitle}>Edutracker</h1>
-          <p style={styles.authSubtitle}>Never miss a college application deadline.</p>
+      <div style={{
+        minHeight: "100vh",
+        background: "linear-gradient(135deg, #0f172a 0%, #1e3a5f 50%, #1e40af 100%)",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "24px",
+        fontFamily: "'Segoe UI', system-ui, sans-serif",
+      }}>
+        <img src={LOGO_URL} alt="Edutracker Logo" style={{ width: 120, marginBottom: 16 }} />
+        <h1 style={{ color: "#fff", fontSize: 28, fontWeight: 800, marginBottom: 4, textAlign: "center" }}>
+          Edutracker
+        </h1>
+        <p style={{ color: "#93c5fd", fontSize: 15, marginBottom: 32, textAlign: "center" }}>
+          Never miss a college application deadline
+        </p>
 
-          <div style={styles.tabRow}>
+        <div style={{
+          background: "#fff",
+          borderRadius: 20,
+          padding: "32px 28px",
+          width: "100%",
+          maxWidth: 380,
+          boxShadow: "0 20px 60px rgba(0,0,0,0.3)",
+        }}>
+          <div style={{ display: "flex", marginBottom: 24, borderRadius: 10, overflow: "hidden", border: "1px solid #e5e7eb" }}>
             <button
-              style={{ ...styles.tabBtn, ...(authMode === "login" ? styles.tabBtnActive : {}) }}
-              onClick={() => { setAuthMode("login"); setAuthError(""); }}
-            >
-              Sign In
-            </button>
+              onClick={() => setAuthMode("signup")}
+              style={{
+                flex: 1, padding: "10px 0", border: "none", cursor: "pointer",
+                background: authMode === "signup" ? "#1d4ed8" : "#f9fafb",
+                color: authMode === "signup" ? "#fff" : "#6b7280",
+                fontWeight: 600, fontSize: 14, transition: "all 0.2s",
+              }}
+            >Sign Up</button>
             <button
-              style={{ ...styles.tabBtn, ...(authMode === "signup" ? styles.tabBtnActive : {}) }}
-              onClick={() => { setAuthMode("signup"); setAuthError(""); }}
-            >
-              Sign Up
-            </button>
+              onClick={() => setAuthMode("login")}
+              style={{
+                flex: 1, padding: "10px 0", border: "none", cursor: "pointer",
+                background: authMode === "login" ? "#1d4ed8" : "#f9fafb",
+                color: authMode === "login" ? "#fff" : "#6b7280",
+                fontWeight: 600, fontSize: 14, transition: "all 0.2s",
+              }}
+            >Log In</button>
           </div>
 
-          <form onSubmit={handleAuth} style={styles.form}>
-            <label style={styles.label}>Email</label>
+          <form onSubmit={handleAuth}>
+            <label style={{ display: "block", marginBottom: 6, fontSize: 13, color: "#374151", fontWeight: 600 }}>Email</label>
             <input
               type="email"
-              required
               value={authEmail}
               onChange={(e) => setAuthEmail(e.target.value)}
-              style={styles.input}
-              placeholder="you@example.com"
-              autoComplete="email"
+              required
+              placeholder="you@email.com"
+              style={{
+                width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #d1d5db",
+                fontSize: 15, marginBottom: 14, boxSizing: "border-box", outline: "none",
+              }}
             />
-            <label style={styles.label}>Password</label>
+            <label style={{ display: "block", marginBottom: 6, fontSize: 13, color: "#374151", fontWeight: 600 }}>Password</label>
             <input
               type="password"
-              required
               value={authPassword}
               onChange={(e) => setAuthPassword(e.target.value)}
-              style={styles.input}
+              required
               placeholder="••••••••"
-              autoComplete={authMode === "signup" ? "new-password" : "current-password"}
+              style={{
+                width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #d1d5db",
+                fontSize: 15, marginBottom: 18, boxSizing: "border-box", outline: "none",
+              }}
             />
-            {authError && <p style={styles.errorMsg}>{authError}</p>}
-            <button type="submit" style={styles.primaryBtn} disabled={authLoading}>
-              {authLoading ? "Please wait…" : authMode === "signup" ? "Create Account" : "Sign In"}
+            {authError && (
+              <div style={{ background: "#fef2f2", color: "#dc2626", borderRadius: 8, padding: "8px 12px", marginBottom: 14, fontSize: 13 }}>
+                {authError}
+              </div>
+            )}
+            <button
+              type="submit"
+              disabled={authLoading}
+              style={{
+                width: "100%", padding: "12px 0", background: "#1d4ed8", color: "#fff",
+                border: "none", borderRadius: 10, fontSize: 16, fontWeight: 700,
+                cursor: authLoading ? "not-allowed" : "pointer", opacity: authLoading ? 0.7 : 1,
+              }}
+            >
+              {authLoading ? "..." : authMode === "signup" ? "Create Account" : "Log In"}
             </button>
           </form>
         </div>
@@ -328,609 +329,304 @@ export default function Home() {
     );
   }
 
-  // ---- MAIN APP ----
   return (
-    <div style={styles.appShell}>
+    <div style={{
+      minHeight: "100vh",
+      background: "#f0f4ff",
+      fontFamily: "'Segoe UI', system-ui, sans-serif",
+    }}>
       {/* Header */}
-      <header style={styles.header}>
-        <div style={styles.headerLeft}>
-          <img src={LOGO_URL} alt="Edutracker" style={styles.headerLogo} />
-          <span style={styles.headerTitle}>Edutracker</span>
+      <div style={{
+        background: "linear-gradient(135deg, #0f172a 0%, #1e3a5f 60%, #1d4ed8 100%)",
+        padding: "16px 20px",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        boxShadow: "0 2px 12px rgba(0,0,0,0.2)",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <img src={LOGO_URL} alt="Edutracker" style={{ width: 36, height: 36, objectFit: "contain" }} />
+          <span style={{ color: "#fff", fontWeight: 800, fontSize: 20 }}>Edutracker</span>
         </div>
-        <div style={styles.headerRight}>
-          <span style={styles.headerEmail}>{email}</span>
-          <button style={styles.logoutBtn} onClick={handleLogout}>Sign Out</button>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <span style={{ color: "#93c5fd", fontSize: 12, maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{email}</span>
+          <button
+            onClick={handleLogout}
+            style={{
+              background: "rgba(255,255,255,0.1)", color: "#fff", border: "1px solid rgba(255,255,255,0.2)",
+              borderRadius: 8, padding: "6px 12px", fontSize: 12, cursor: "pointer", fontWeight: 600,
+            }}
+          >Logout</button>
         </div>
-      </header>
+      </div>
 
-      <main style={styles.main}>
-        {/* Stats bar */}
-        <div style={styles.statsBar}>
-          <div style={styles.statCard}>
-            <span style={styles.statNumber}>{deadlines.length}</span>
-            <span style={styles.statLabel}>Total Schools</span>
-          </div>
-          <div style={styles.statCard}>
-            <span style={styles.statNumber}>{upcomingDeadlines.length}</span>
-            <span style={styles.statLabel}>Upcoming</span>
-          </div>
-          <div style={styles.statCard}>
-            <span style={styles.statNumber}>
-              {deadlines.filter((d) => daysUntil(d.deadline_date) <= 7 && daysUntil(d.deadline_date) >= 0).length}
-            </span>
-            <span style={styles.statLabel}>Due This Week</span>
-          </div>
+      {/* Summary Banner */}
+      <div style={{
+        background: "linear-gradient(90deg, #1d4ed8, #3b82f6)",
+        padding: "18px 20px",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+      }}>
+        <div>
+          <div style={{ color: "#bfdbfe", fontSize: 12, fontWeight: 600, marginBottom: 2 }}>UPCOMING DEADLINES</div>
+          <div style={{ color: "#fff", fontSize: 28, fontWeight: 800 }}>{upcomingDeadlines.length}</div>
         </div>
+        <div style={{ textAlign: "right" }}>
+          <div style={{ color: "#bfdbfe", fontSize: 12, fontWeight: 600, marginBottom: 2 }}>TOTAL SCHOOLS</div>
+          <div style={{ color: "#fff", fontSize: 28, fontWeight: 800 }}>{deadlines.length}</div>
+        </div>
+        <button
+          onClick={openAdd}
+          style={{
+            background: "#fff", color: "#1d4ed8", border: "none",
+            borderRadius: 12, padding: "10px 18px", fontSize: 14, fontWeight: 700,
+            cursor: "pointer", boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+          }}
+        >+ Add</button>
+      </div>
 
-        {/* Add button + tabs */}
-        <div style={styles.actionRow}>
-          <div style={styles.miniTabs}>
-            <button
-              style={{ ...styles.miniTab, ...(activeTab === "upcoming" ? styles.miniTabActive : {}) }}
-              onClick={() => setActiveTab("upcoming")}
-            >
-              Upcoming
-            </button>
-            <button
-              style={{ ...styles.miniTab, ...(activeTab === "all" ? styles.miniTabActive : {}) }}
-              onClick={() => setActiveTab("all")}
-            >
-              All
-            </button>
-          </div>
-          <button style={styles.addBtn} onClick={() => setShowForm(true)}>
-            + Add Deadline
+      {/* Tabs */}
+      <div style={{ display: "flex", background: "#fff", borderBottom: "2px solid #e5e7eb" }}>
+        {(["upcoming", "all"] as const).map((t) => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            style={{
+              flex: 1, padding: "14px 0", border: "none", cursor: "pointer",
+              background: "none", fontSize: 14, fontWeight: 600,
+              color: tab === t ? "#1d4ed8" : "#6b7280",
+              borderBottom: tab === t ? "2px solid #1d4ed8" : "2px solid transparent",
+              marginBottom: -2,
+            }}
+          >
+            {t === "upcoming" ? "Upcoming" : "All Deadlines"}
           </button>
-        </div>
+        ))}
+      </div>
 
-        {/* Add Deadline Modal */}
-        {showForm && (
-          <div style={styles.modalOverlay} onClick={() => setShowForm(false)}>
-            <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
-              <h2 style={styles.modalTitle}>Add College Deadline</h2>
-              <form onSubmit={handleAddDeadline}>
-                <label style={styles.label}>School Name</label>
-                <div style={{ position: "relative" }}>
-                  <input
-                    type="text"
-                    value={formSchool === "__custom__" ? formSchoolCustom : formSchool}
-                    onChange={(e) => {
-                      handleSchoolInput(e.target.value);
-                    }}
-                    style={styles.input}
-                    placeholder="Search or type school name…"
-                    autoComplete="off"
-                  />
-                  {schoolSuggestions.length > 0 && (
-                    <ul style={styles.suggestions}>
-                      {schoolSuggestions.map((s) => (
-                        <li
-                          key={s}
-                          style={styles.suggestionItem}
-                          onClick={() => {
-                            setFormSchool(s);
-                            setSchoolSuggestions([]);
-                          }}
-                        >
-                          {s}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-
-                <label style={styles.label}>Deadline Date</label>
-                <input
-                  type="date"
-                  required
-                  value={formDate}
-                  onChange={(e) => setFormDate(e.target.value)}
-                  style={styles.input}
-                  min={new Date().toISOString().split("T")[0]}
-                />
-
-                <label style={styles.label}>Application Type</label>
-                <select
-                  required
-                  value={formType}
-                  onChange={(e) => setFormType(e.target.value)}
-                  style={styles.input}
-                >
-                  <option value="">Select type…</option>
-                  {APPLICATION_TYPES.map((t) => (
-                    <option key={t} value={t}>{t}</option>
-                  ))}
-                </select>
-
-                <label style={styles.label}>Notes (optional)</label>
-                <textarea
-                  value={formNotes}
-                  onChange={(e) => setFormNotes(e.target.value)}
-                  style={{ ...styles.input, height: 72, resize: "vertical" }}
-                  placeholder="e.g., need recommendation letters"
-                />
-
-                {formError && <p style={styles.errorMsg}>{formError}</p>}
-
-                <div style={styles.modalButtons}>
-                  <button
-                    type="button"
-                    style={styles.cancelBtn}
-                    onClick={() => setShowForm(false)}
-                  >
-                    Cancel
-                  </button>
-                  <button type="submit" style={styles.primaryBtn} disabled={formLoading}>
-                    {formLoading ? "Saving…" : "Add Deadline"}
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        )}
-
-        {/* Deadline list */}
+      {/* Deadlines List */}
+      <div style={{ padding: "16px 16px 100px" }}>
         {loadingDeadlines ? (
-          <div style={styles.emptyState}>
-            <p style={{ color: "#6b7280" }}>Loading your deadlines…</p>
-          </div>
-        ) : displayedDeadlines.length === 0 ? (
-          <div style={styles.emptyState}>
+          <div style={{ textAlign: "center", color: "#6b7280", padding: 40 }}>Loading...</div>
+        ) : displayDeadlines.length === 0 ? (
+          <div style={{
+            textAlign: "center", padding: "60px 20px",
+            background: "#fff", borderRadius: 16, margin: "16px 0",
+            boxShadow: "0 1px 4px rgba(0,0,0,0.06)",
+          }}>
             <div style={{ fontSize: 48, marginBottom: 12 }}>🎓</div>
-            <p style={{ color: "#374151", fontWeight: 600, fontSize: 18 }}>No deadlines yet</p>
-            <p style={{ color: "#6b7280", marginTop: 4 }}>
-              {activeTab === "upcoming"
-                ? "Add your first college application deadline to get started."
-                : "You haven't added any deadlines yet."}
-            </p>
-            <button style={{ ...styles.primaryBtn, marginTop: 20 }} onClick={() => setShowForm(true)}>
-              + Add Your First Deadline
-            </button>
+            <div style={{ color: "#374151", fontWeight: 700, fontSize: 18, marginBottom: 8 }}>
+              {tab === "upcoming" ? "No upcoming deadlines" : "No deadlines yet"}
+            </div>
+            <div style={{ color: "#6b7280", fontSize: 14, marginBottom: 20 }}>
+              {tab === "upcoming"
+                ? "All caught up! Add a school to start tracking."
+                : "Start tracking your college application deadlines."}
+            </div>
+            <button
+              onClick={openAdd}
+              style={{
+                background: "#1d4ed8", color: "#fff", border: "none",
+                borderRadius: 10, padding: "12px 24px", fontSize: 15, fontWeight: 700,
+                cursor: "pointer",
+              }}
+            >Add Your First School</button>
           </div>
         ) : (
-          <div style={styles.deadlineList}>
-            {displayedDeadlines.map((d) => {
-              const days = daysUntil(d.deadline_date);
-              const color = urgencyColor(days);
-              const label = urgencyLabel(days);
-              return (
-                <div key={d.id} style={styles.deadlineCard}>
-                  <div style={{ ...styles.urgencyBar, background: color }} />
-                  <div style={styles.cardBody}>
-                    <div style={styles.cardTop}>
-                      <div>
-                        <h3 style={styles.schoolName}>{d.school_name}</h3>
-                        <span style={styles.appType}>{d.application_type}</span>
-                      </div>
-                      <div style={styles.cardRight}>
-                        <span style={{ ...styles.urgencyBadge, background: color }}>
-                          {label}
-                        </span>
-                        <button
-                          style={styles.deleteBtn}
-                          onClick={() => handleDelete(d.id)}
-                          disabled={deleteId === d.id}
-                          title="Remove deadline"
-                        >
-                          {deleteId === d.id ? "…" : "✕"}
-                        </button>
-                      </div>
-                    </div>
-                    <div style={styles.dateRow}>
-                      <span style={styles.dateIcon}>📅</span>
-                      <span style={styles.dateText}>{formatDate(d.deadline_date)}</span>
-                    </div>
-                    {d.notes && (
-                      <p style={styles.notesText}>{d.notes}</p>
-                    )}
-                  </div>
+          displayDeadlines.map((d) => {
+            const days = getDaysUntil(d.deadline_date);
+            const color = urgencyColor(days);
+            const label = urgencyLabel(days);
+            return (
+              <div
+                key={d.id}
+                style={{
+                  background: "#fff",
+                  borderRadius: 14,
+                  padding: "16px",
+                  marginBottom: 12,
+                  boxShadow: "0 1px 6px rgba(0,0,0,0.07)",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 14,
+                  borderLeft: `4px solid ${color}`,
+                }}
+              >
+                <div style={{
+                  background: color + "22",
+                  borderRadius: 10,
+                  padding: "8px 10px",
+                  textAlign: "center",
+                  minWidth: 52,
+                }}>
+                  <div style={{ color, fontWeight: 800, fontSize: 13 }}>{label}</div>
                 </div>
-              );
-            })}
-          </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 700, fontSize: 15, color: "#111827", marginBottom: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {d.school_name}
+                  </div>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    <span style={{
+                      background: "#eff6ff", color: "#1d4ed8",
+                      borderRadius: 6, padding: "2px 8px", fontSize: 11, fontWeight: 600,
+                    }}>
+                      {APP_TYPE_SHORT[d.application_type] || d.application_type}
+                    </span>
+                    <span style={{ color: "#6b7280", fontSize: 12 }}>{d.deadline_date}</span>
+                  </div>
+                  {d.notes && (
+                    <div style={{ color: "#9ca3af", fontSize: 12, marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {d.notes}
+                    </div>
+                  )}
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    onClick={() => openEdit(d)}
+                    style={{
+                      background: "#f3f4f6", border: "none", borderRadius: 8,
+                      padding: "6px 10px", cursor: "pointer", fontSize: 13, color: "#374151",
+                    }}
+                  >✏️</button>
+                  <button
+                    onClick={() => handleDelete(d.id)}
+                    style={{
+                      background: "#fef2f2", border: "none", borderRadius: 8,
+                      padding: "6px 10px", cursor: "pointer", fontSize: 13, color: "#dc2626",
+                    }}
+                  >🗑️</button>
+                </div>
+              </div>
+            );
+          })
         )}
-      </main>
+      </div>
+
+      {/* Add/Edit Modal */}
+      {showAdd && (
+        <div style={{
+          position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)",
+          display: "flex", alignItems: "flex-end", justifyContent: "center",
+          zIndex: 1000,
+        }}
+          onClick={(e) => { if (e.target === e.currentTarget) setShowAdd(false); }}
+        >
+          <div style={{
+            background: "#fff", borderRadius: "20px 20px 0 0",
+            padding: "24px 20px 40px",
+            width: "100%", maxWidth: 500,
+            boxShadow: "0 -8px 32px rgba(0,0,0,0.15)",
+            maxHeight: "90vh", overflowY: "auto",
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+              <h2 style={{ margin: 0, fontSize: 20, fontWeight: 800, color: "#111827" }}>
+                {editDeadline ? "Edit Deadline" : "Add School"}
+              </h2>
+              <button
+                onClick={() => setShowAdd(false)}
+                style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "#6b7280" }}
+              >✕</button>
+            </div>
+
+            <form onSubmit={handleFormSubmit}>
+              <label style={{ display: "block", marginBottom: 6, fontSize: 13, color: "#374151", fontWeight: 600 }}>School Name</label>
+              <div style={{ position: "relative", marginBottom: 14 }}>
+                <input
+                  type="text"
+                  value={formSchoolSearch}
+                  onChange={(e) => {
+                    setFormSchoolSearch(e.target.value);
+                    setFormSchool(e.target.value);
+                  }}
+                  placeholder="Search or type school name..."
+                  style={{
+                    width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #d1d5db",
+                    fontSize: 15, boxSizing: "border-box", outline: "none",
+                  }}
+                />
+                {filteredSchools.length > 0 && (
+                  <div style={{
+                    position: "absolute", top: "100%", left: 0, right: 0,
+                    background: "#fff", border: "1px solid #d1d5db", borderRadius: "0 0 8px 8px",
+                    boxShadow: "0 4px 12px rgba(0,0,0,0.1)", zIndex: 10, maxHeight: 200, overflowY: "auto",
+                  }}>
+                    {filteredSchools.map((s) => (
+                      <div
+                        key={s}
+                        onClick={() => { setFormSchool(s); setFormSchoolSearch(s); }}
+                        style={{
+                          padding: "10px 12px", cursor: "pointer", fontSize: 14,
+                          borderBottom: "1px solid #f3f4f6",
+                        }}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = "#eff6ff")}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = "#fff")}
+                      >
+                        {s}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <label style={{ display: "block", marginBottom: 6, fontSize: 13, color: "#374151", fontWeight: 600 }}>Deadline Date</label>
+              <input
+                type="month"
+                value={formDate}
+                onChange={(e) => setFormDate(e.target.value)}
+                style={{
+                  width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #d1d5db",
+                  fontSize: 15, marginBottom: 14, boxSizing: "border-box", outline: "none",
+                }}
+              />
+
+              <label style={{ display: "block", marginBottom: 6, fontSize: 13, color: "#374151", fontWeight: 600 }}>Application Type</label>
+              <select
+                value={formType}
+                onChange={(e) => setFormType(e.target.value)}
+                style={{
+                  width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #d1d5db",
+                  fontSize: 15, marginBottom: 14, boxSizing: "border-box", outline: "none", background: "#fff",
+                }}
+              >
+                {APP_TYPES.map((t) => (
+                  <option key={t} value={t}>{t}</option>
+                ))}
+              </select>
+
+              <label style={{ display: "block", marginBottom: 6, fontSize: 13, color: "#374151", fontWeight: 600 }}>Notes (optional)</label>
+              <textarea
+                value={formNotes}
+                onChange={(e) => setFormNotes(e.target.value)}
+                placeholder="Any notes about this application..."
+                rows={3}
+                style={{
+                  width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #d1d5db",
+                  fontSize: 14, marginBottom: 18, boxSizing: "border-box", outline: "none", resize: "vertical",
+                }}
+              />
+
+              {formError && (
+                <div style={{ background: "#fef2f2", color: "#dc2626", borderRadius: 8, padding: "8px 12px", marginBottom: 14, fontSize: 13 }}>
+                  {formError}
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={formLoading}
+                style={{
+                  width: "100%", padding: "14px 0", background: "#1d4ed8", color: "#fff",
+                  border: "none", borderRadius: 12, fontSize: 16, fontWeight: 700,
+                  cursor: formLoading ? "not-allowed" : "pointer", opacity: formLoading ? 0.7 : 1,
+                }}
+              >
+                {formLoading ? "Saving..." : editDeadline ? "Save Changes" : "Add Deadline"}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
-
-const styles: Record<string, React.CSSProperties> = {
-  loadingScreen: {
-    minHeight: "100vh",
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    justifyContent: "center",
-    background: "#f0f6ff",
-  },
-  loadingLogo: {
-    width: 80,
-    height: 80,
-    objectFit: "contain",
-  },
-  authPage: {
-    minHeight: "100vh",
-    background: "linear-gradient(135deg, #dbeafe 0%, #eff6ff 50%, #e0f2fe 100%)",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 16,
-  },
-  authCard: {
-    background: "#fff",
-    borderRadius: 20,
-    padding: "40px 36px",
-    width: "100%",
-    maxWidth: 400,
-    boxShadow: "0 20px 60px rgba(59,130,246,0.15)",
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-  },
-  authLogo: {
-    width: 72,
-    height: 72,
-    objectFit: "contain",
-    marginBottom: 8,
-  },
-  authTitle: {
-    fontSize: 28,
-    fontWeight: 800,
-    color: "#1e40af",
-    margin: "0 0 4px",
-  },
-  authSubtitle: {
-    fontSize: 14,
-    color: "#6b7280",
-    marginBottom: 24,
-    textAlign: "center",
-  },
-  tabRow: {
-    display: "flex",
-    width: "100%",
-    marginBottom: 20,
-    borderRadius: 10,
-    overflow: "hidden",
-    border: "1px solid #dbeafe",
-  },
-  tabBtn: {
-    flex: 1,
-    padding: "10px 0",
-    border: "none",
-    background: "#f9fafb",
-    color: "#6b7280",
-    cursor: "pointer",
-    fontWeight: 600,
-    fontSize: 14,
-    transition: "all 0.2s",
-  },
-  tabBtnActive: {
-    background: "#3b82f6",
-    color: "#fff",
-  },
-  form: {
-    width: "100%",
-    display: "flex",
-    flexDirection: "column",
-  },
-  label: {
-    fontSize: 13,
-    fontWeight: 600,
-    color: "#374151",
-    marginBottom: 4,
-    marginTop: 12,
-  },
-  input: {
-    width: "100%",
-    padding: "10px 12px",
-    border: "1.5px solid #e5e7eb",
-    borderRadius: 8,
-    fontSize: 14,
-    color: "#111827",
-    background: "#f9fafb",
-    outline: "none",
-    boxSizing: "border-box",
-    transition: "border-color 0.2s",
-  },
-  errorMsg: {
-    color: "#ef4444",
-    fontSize: 13,
-    marginTop: 8,
-  },
-  primaryBtn: {
-    marginTop: 20,
-    padding: "12px 0",
-    background: "#3b82f6",
-    color: "#fff",
-    border: "none",
-    borderRadius: 10,
-    fontWeight: 700,
-    fontSize: 15,
-    cursor: "pointer",
-    width: "100%",
-    transition: "background 0.2s",
-  },
-  // App shell
-  appShell: {
-    minHeight: "100vh",
-    background: "#f0f6ff",
-    display: "flex",
-    flexDirection: "column",
-  },
-  header: {
-    background: "#fff",
-    borderBottom: "1px solid #dbeafe",
-    padding: "12px 20px",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    position: "sticky",
-    top: 0,
-    zIndex: 100,
-    boxShadow: "0 2px 8px rgba(59,130,246,0.08)",
-  },
-  headerLeft: {
-    display: "flex",
-    alignItems: "center",
-    gap: 10,
-  },
-  headerLogo: {
-    width: 36,
-    height: 36,
-    objectFit: "contain",
-  },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: 800,
-    color: "#1e40af",
-  },
-  headerRight: {
-    display: "flex",
-    alignItems: "center",
-    gap: 10,
-  },
-  headerEmail: {
-    fontSize: 12,
-    color: "#6b7280",
-    maxWidth: 150,
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-  },
-  logoutBtn: {
-    background: "transparent",
-    border: "1.5px solid #dbeafe",
-    borderRadius: 8,
-    padding: "6px 12px",
-    fontSize: 12,
-    color: "#3b82f6",
-    cursor: "pointer",
-    fontWeight: 600,
-  },
-  main: {
-    flex: 1,
-    maxWidth: 720,
-    width: "100%",
-    margin: "0 auto",
-    padding: "24px 16px 60px",
-    boxSizing: "border-box",
-  },
-  statsBar: {
-    display: "flex",
-    gap: 12,
-    marginBottom: 20,
-  },
-  statCard: {
-    flex: 1,
-    background: "#fff",
-    borderRadius: 12,
-    padding: "16px 12px",
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    boxShadow: "0 2px 8px rgba(59,130,246,0.07)",
-  },
-  statNumber: {
-    fontSize: 28,
-    fontWeight: 800,
-    color: "#1e40af",
-  },
-  statLabel: {
-    fontSize: 11,
-    color: "#6b7280",
-    marginTop: 2,
-    textAlign: "center",
-  },
-  actionRow: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 16,
-  },
-  miniTabs: {
-    display: "flex",
-    gap: 0,
-    background: "#e0eafb",
-    borderRadius: 8,
-    padding: 3,
-  },
-  miniTab: {
-    padding: "6px 16px",
-    border: "none",
-    background: "transparent",
-    borderRadius: 6,
-    fontSize: 13,
-    fontWeight: 600,
-    color: "#6b7280",
-    cursor: "pointer",
-  },
-  miniTabActive: {
-    background: "#fff",
-    color: "#1e40af",
-    boxShadow: "0 1px 4px rgba(59,130,246,0.15)",
-  },
-  addBtn: {
-    background: "#3b82f6",
-    color: "#fff",
-    border: "none",
-    borderRadius: 10,
-    padding: "10px 18px",
-    fontWeight: 700,
-    fontSize: 14,
-    cursor: "pointer",
-    boxShadow: "0 4px 12px rgba(59,130,246,0.3)",
-  },
-  deadlineList: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 12,
-  },
-  deadlineCard: {
-    background: "#fff",
-    borderRadius: 14,
-    overflow: "hidden",
-    display: "flex",
-    boxShadow: "0 2px 10px rgba(59,130,246,0.08)",
-  },
-  urgencyBar: {
-    width: 5,
-    flexShrink: 0,
-  },
-  cardBody: {
-    flex: 1,
-    padding: "14px 16px",
-  },
-  cardTop: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    marginBottom: 8,
-  },
-  cardRight: {
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "flex-end",
-    gap: 6,
-  },
-  schoolName: {
-    fontSize: 16,
-    fontWeight: 700,
-    color: "#111827",
-    margin: 0,
-  },
-  appType: {
-    fontSize: 12,
-    color: "#6b7280",
-    marginTop: 2,
-    display: "block",
-  },
-  urgencyBadge: {
-    color: "#fff",
-    fontSize: 11,
-    fontWeight: 700,
-    borderRadius: 20,
-    padding: "3px 10px",
-    whiteSpace: "nowrap",
-  },
-  deleteBtn: {
-    background: "transparent",
-    border: "none",
-    color: "#d1d5db",
-    cursor: "pointer",
-    fontSize: 14,
-    padding: 2,
-    lineHeight: 1,
-  },
-  dateRow: {
-    display: "flex",
-    alignItems: "center",
-    gap: 6,
-  },
-  dateIcon: {
-    fontSize: 14,
-  },
-  dateText: {
-    fontSize: 13,
-    color: "#374151",
-    fontWeight: 500,
-  },
-  notesText: {
-    marginTop: 6,
-    fontSize: 12,
-    color: "#9ca3af",
-    fontStyle: "italic",
-  },
-  emptyState: {
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: "60px 20px",
-    textAlign: "center",
-  },
-  // Modal
-  modalOverlay: {
-    position: "fixed",
-    inset: 0,
-    background: "rgba(0,0,0,0.4)",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    zIndex: 200,
-    padding: 16,
-  },
-  modal: {
-    background: "#fff",
-    borderRadius: 20,
-    padding: "28px 24px",
-    width: "100%",
-    maxWidth: 460,
-    maxHeight: "90vh",
-    overflowY: "auto",
-    boxShadow: "0 24px 60px rgba(0,0,0,0.2)",
-  },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: 800,
-    color: "#1e40af",
-    margin: "0 0 4px",
-  },
-  modalButtons: {
-    display: "flex",
-    gap: 10,
-    marginTop: 20,
-  },
-  cancelBtn: {
-    flex: 1,
-    padding: "12px 0",
-    background: "#f3f4f6",
-    color: "#374151",
-    border: "none",
-    borderRadius: 10,
-    fontWeight: 600,
-    fontSize: 14,
-    cursor: "pointer",
-  },
-  suggestions: {
-    position: "absolute",
-    top: "100%",
-    left: 0,
-    right: 0,
-    background: "#fff",
-    border: "1.5px solid #dbeafe",
-    borderRadius: 8,
-    listStyle: "none",
-    margin: 0,
-    padding: 0,
-    zIndex: 300,
-    boxShadow: "0 8px 24px rgba(59,130,246,0.15)",
-  },
-  suggestionItem: {
-    padding: "10px 14px",
-    cursor: "pointer",
-    fontSize: 14,
-    color: "#111827",
-    borderBottom: "1px solid #f3f4f6",
-    transition: "background 0.15s",
-  },
-};
