@@ -2,11 +2,15 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Edutracker — College Application Deadline Tracker",
-  description: "Never miss a college application deadline. Track Early Decision, Early Action, and Regular Decision deadlines all in one place.",
+  title: "Edutracker — College Application Deadline Manager",
+  description: "Track college application deadlines and get automated reminders for Early Decision, Early Action, Regular Decision, and Financial Aid due dates.",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
     <html lang="en">
       <body>{children}</body>

@@ -1,34 +1,37 @@
 *, *::before, *::after {
   box-sizing: border-box;
-}
-
-html, body {
   margin: 0;
   padding: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-  background: #f7f8fc;
-  color: #1a202c;
-  -webkit-font-smoothing: antialiased;
 }
 
-input, select, textarea, button {
+html {
+  font-size: 16px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  font-family: 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  background: #f5f7fa;
+  color: #222;
+  line-height: 1.5;
+}
+
+button {
   font-family: inherit;
 }
 
-@keyframes slideIn {
-  from {
-    opacity: 0;
-    transform: translateX(40px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
+input, select, textarea {
+  font-family: inherit;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
 }
 
 ::-webkit-scrollbar {
   width: 6px;
-  height: 6px;
 }
 
 ::-webkit-scrollbar-track {
@@ -36,19 +39,10 @@ input, select, textarea, button {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #c4c4c4;
+  background: #c5cae9;
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #a0a0a0;
-}
-
-/* Focus visible for accessibility */
-button:focus-visible,
-input:focus-visible,
-select:focus-visible,
-textarea:focus-visible {
-  outline: 2px solid #7c3aed;
-  outline-offset: 2px;
+  background: #3949ab;
 }
