@@ -1,633 +1,910 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { COLLEGES } from "../lib/colleges";
-import type { College, DeadlineType } from "../lib/colleges";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { TOP_COLLEGES } from "@/lib/colleges";
 
-type Step = "onboarding" | "select" | "dashboard";
-
-interface SavedDeadline {
-  collegeId: string;
-  collegeName: string;
-  type: DeadlineType;
-  date: string;
-  label: string;
+/* ─── Types ─────────────────────────────────────────────────── */
+interface Deadline {
+  id: string;
+  college_id: string;
+  college_name: string;
+  deadline_type: string;
+  deadline_date: string; // YYYY-MM-DD
+  notes: string;
 }
 
-const DEADLINE_LABELS: Record<DeadlineType, string> = {
-  ea: "Early Action",
-  ed: "Early Decision",
-  ed2: "Early Decision II",
-  rd: "Regular Decision",
-  faid: "Financial Aid",
-};
+interface User {
+  email: string;
+}
 
-const DEADLINE_COLORS: Record<DeadlineType, string> = {
-  ea: "#6366f1",
-  ed: "#ec4899",
-  ed2: "#f97316",
-  rd: "#0ea5e9",
-  faid: "#10b981",
-};
+type View = "auth" | "dashboard" | "add";
+type UrgencyLevel = "red" | "yellow" | "green" | "past";
 
+/* ─── Helpers ───────────────────────────────────────────────── */
 function daysUntil(dateStr: string): number {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const target = new Date(dateStr);
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  const target = new Date(dateStr + "T00:00:00");
   target.setHours(0, 0, 0, 0);
-  return Math.ceil((target.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+  return Math.round((target.getTime() - now.getTime()) / 86400000);
 }
 
-function urgencyColor(days: number): string {
-  if (days < 0) return "#94a3b8";
-  if (days < 14) return "#ef4444";
-  if (days < 30) return "#f59e0b";
-  return "#22c55e";
+function urgency(days: number): UrgencyLevel {
+  if (days < 0) return "past";
+  if (days < 7) return "red";
+  if (days < 30) return "yellow";
+  return "green";
 }
 
-function urgencyLabel(days: number): string {
-  if (days < 0) return "Past";
-  if (days < 14) return "Urgent";
-  if (days < 30) return "Soon";
-  return "Upcoming";
+function urgencyColor(level: UrgencyLevel) {
+  switch (level) {
+    case "red":    return { fg: "var(--red)",    bg: "var(--red-bg)" };
+    case "yellow": return { fg: "var(--yellow)", bg: "var(--yellow-bg)" };
+    case "green":  return { fg: "var(--green)",  bg: "var(--green-bg)" };
+    case "past":   return { fg: "var(--text-muted)", bg: "rgba(139,143,168,0.08)" };
+  }
 }
 
-function urgencyBg(days: number): string {
-  if (days < 0) return "#f1f5f9";
-  if (days < 14) return "#fef2f2";
-  if (days < 30) return "#fffbeb";
-  return "#f0fdf4";
+function badgeClass(type: string) {
+  const map: Record<string, string> = {
+    EA: "badge-ea", REA: "badge-ea",
+    ED: "badge-ed", ED1: "badge-ed1", ED2: "badge-ed2",
+    RD: "badge-rd", Rolling: "badge-rolling",
+  };
+  return "badge " + (map[type] ?? "badge-rd");
 }
 
+function formatDate(dateStr: string): string {
+  const d = new Date(dateStr + "T00:00:00");
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+function localKey(email: string) { return `edutracker_deadlines_${email}`; }
+
+function loadLocal(email: string): Deadline[] {
+  try {
+    const raw = localStorage.getItem(localKey(email));
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+
+function saveLocal(email: string, dl: Deadline[]) {
+  localStorage.setItem(localKey(email), JSON.stringify(dl));
+}
+
+/* ─── Countdown hook ────────────────────────────────────────── */
+function useCountdown(dateStr: string) {
+  const [timeLeft, setTimeLeft] = useState("");
+
+  useEffect(() => {
+    const calc = () => {
+      const target = new Date(dateStr + "T23:59:59");
+      const diff = target.getTime() - Date.now();
+      if (diff <= 0) { setTimeLeft("Past due"); return; }
+      const d = Math.floor(diff / 86400000);
+      const h = Math.floor((diff % 86400000) / 3600000);
+      const m = Math.floor((diff % 3600000) / 60000);
+      const s = Math.floor((diff % 60000) / 1000);
+      if (d > 0) setTimeLeft(`${d}d ${h}h ${m}m`);
+      else setTimeLeft(`${h}h ${m}m ${s}s`);
+    };
+    calc();
+    const id = setInterval(calc, 1000);
+    return () => clearInterval(id);
+  }, [dateStr]);
+
+  return timeLeft;
+}
+
+/* ─── Sub-components ────────────────────────────────────────── */
+function CountdownBadge({ dateStr, urgencyLevel }: { dateStr: string; urgencyLevel: UrgencyLevel }) {
+  const time = useCountdown(dateStr);
+  const { fg } = urgencyColor(urgencyLevel);
+  return (
+    <span style={{ fontSize: 12, color: fg, fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>
+      {time}
+    </span>
+  );
+}
+
+function DeadlineCard({
+  dl,
+  onDelete,
+}: {
+  dl: Deadline;
+  onDelete: (id: string) => void;
+}) {
+  const days = daysUntil(dl.deadline_date);
+  const level = urgency(days);
+  const { fg, bg } = urgencyColor(level);
+  const [confirming, setConfirming] = useState(false);
+
+  return (
+    <div
+      className="fade-in"
+      style={{
+        background: "var(--surface)",
+        border: `1.5px solid ${fg}44`,
+        borderRadius: "var(--radius)",
+        padding: "16px 20px",
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+        position: "relative",
+        transition: "box-shadow 0.2s",
+      }}
+    >
+      {/* Urgency strip */}
+      <div style={{
+        position: "absolute", top: 0, left: 0, right: 0, height: 3,
+        borderRadius: "var(--radius) var(--radius) 0 0",
+        background: level === "past" ? "var(--border)" : fg,
+        opacity: level === "past" ? 0.3 : 1,
+      }} />
+
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8, marginTop: 4 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 700, fontSize: 16, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            {dl.college_name}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4, flexWrap: "wrap" }}>
+            <span className={badgeClass(dl.deadline_type)}>{dl.deadline_type}</span>
+            <span style={{ color: "var(--text-muted)", fontSize: 13 }}>{formatDate(dl.deadline_date)}</span>
+          </div>
+        </div>
+        <div style={{ textAlign: "right", flexShrink: 0 }}>
+          <div
+            style={{
+              display: "inline-block",
+              background: bg,
+              color: fg,
+              borderRadius: "var(--radius-sm)",
+              padding: "4px 10px",
+              fontWeight: 700,
+              fontSize: 13,
+            }}
+          >
+            {level === "past" ? "Past" : days === 0 ? "TODAY" : `${days}d`}
+          </div>
+          <div style={{ marginTop: 4 }}>
+            <CountdownBadge dateStr={dl.deadline_date} urgencyLevel={level} />
+          </div>
+        </div>
+      </div>
+
+      {dl.notes && (
+        <div style={{ fontSize: 13, color: "var(--text-muted)", borderTop: "1px solid var(--border)", paddingTop: 8 }}>
+          {dl.notes}
+        </div>
+      )}
+
+      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+        {confirming ? (
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              onClick={() => onDelete(dl.id)}
+              style={{
+                background: "var(--red)", color: "#fff",
+                borderRadius: "var(--radius-sm)", padding: "4px 12px", fontSize: 13, fontWeight: 700,
+              }}
+            >
+              Confirm delete
+            </button>
+            <button
+              onClick={() => setConfirming(false)}
+              style={{
+                background: "var(--surface2)", color: "var(--text-muted)",
+                borderRadius: "var(--radius-sm)", padding: "4px 12px", fontSize: 13,
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={() => setConfirming(true)}
+            style={{ color: "var(--text-muted)", fontSize: 13 }}
+          >
+            ✕ Remove
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ─── Auth Panel ────────────────────────────────────────────── */
+function AuthPanel({ onAuth }: { onAuth: (user: User) => void }) {
+  const [mode, setMode] = useState<"login" | "signup">("login");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const submit = async () => {
+    if (!email || !password) { setError("Enter email and password."); return; }
+    setLoading(true); setError("");
+    try {
+      const res = await fetch("/api/auth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode, email, password }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        onAuth({ email: data.email });
+      } else {
+        setError(data.error ?? "Something went wrong.");
+      }
+    } catch {
+      setError("Network error. Please try again.");
+    }
+    setLoading(false);
+  };
+
+  return (
+    <div style={{
+      minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center",
+      background: "var(--bg)", padding: 24,
+    }}>
+      <div style={{
+        background: "var(--surface)", border: "1.5px solid var(--border)",
+        borderRadius: "var(--radius)", padding: 40, width: "100%", maxWidth: 420,
+      }}>
+        {/* Logo */}
+        <div style={{ textAlign: "center", marginBottom: 32 }}>
+          <div style={{ fontSize: 40, marginBottom: 8 }}>🎓</div>
+          <div style={{ fontSize: 26, fontWeight: 800, color: "var(--accent2)" }}>Edutracker</div>
+          <div style={{ color: "var(--text-muted)", fontSize: 14, marginTop: 4 }}>
+            Never miss a college deadline again
+          </div>
+        </div>
+
+        {/* Tab */}
+        <div style={{
+          display: "flex", background: "var(--surface2)",
+          borderRadius: "var(--radius-sm)", padding: 4, marginBottom: 24,
+        }}>
+          {(["login", "signup"] as const).map((m) => (
+            <button
+              key={m}
+              onClick={() => { setMode(m); setError(""); }}
+              style={{
+                flex: 1, padding: "9px 0", borderRadius: "var(--radius-sm)",
+                fontWeight: 600, fontSize: 14,
+                background: mode === m ? "var(--accent)" : "transparent",
+                color: mode === m ? "#fff" : "var(--text-muted)",
+                transition: "all 0.2s",
+              }}
+            >
+              {m === "login" ? "Log In" : "Sign Up"}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <input
+            type="email"
+            placeholder="Email address"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && submit()}
+          />
+          <input
+            type="password"
+            placeholder="Password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && submit()}
+          />
+          {error && (
+            <div style={{
+              background: "var(--red-bg)", color: "var(--red)",
+              borderRadius: "var(--radius-sm)", padding: "10px 14px", fontSize: 14,
+            }}>
+              {error}
+            </div>
+          )}
+          <button
+            onClick={submit}
+            disabled={loading}
+            style={{
+              background: loading ? "var(--border)" : "var(--accent)",
+              color: "#fff", borderRadius: "var(--radius-sm)", padding: "12px 0",
+              fontWeight: 700, fontSize: 15, transition: "background 0.2s",
+            }}
+          >
+            {loading ? "Loading…" : mode === "login" ? "Log In" : "Create Account"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Add Deadline Panel ────────────────────────────────────── */
+function AddDeadlinePanel({
+  onAdd,
+  onCancel,
+}: {
+  onAdd: (d: Omit<Deadline, "id">) => void;
+  onCancel: () => void;
+}) {
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedCollege, setSelectedCollege] = useState<{ id: string; name: string } | null>(null);
+  const [manualName, setManualName] = useState("");
+  const [deadlineType, setDeadlineType] = useState("RD");
+  const [deadlineDate, setDeadlineDate] = useState("");
+  const [notes, setNotes] = useState("");
+  const [isManual, setIsManual] = useState(false);
+  const [showDropdown, setShowDropdown] = useState(false);
+  const searchRef = useRef<HTMLDivElement>(null);
+
+  const deadlineTypes = ["EA", "REA", "ED", "ED1", "ED2", "RD", "Rolling", "Other"];
+
+  const filtered = searchQuery.length >= 1
+    ? TOP_COLLEGES.filter((c) =>
+        c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        c.location.toLowerCase().includes(searchQuery.toLowerCase())
+      ).slice(0, 10)
+    : [];
+
+  const selectCollege = (c: typeof TOP_COLLEGES[0]) => {
+    setSelectedCollege({ id: c.id, name: c.name });
+    setSearchQuery(c.name);
+    setShowDropdown(false);
+    // Pre-fill deadline type and date from commonDeadlines
+    if (c.commonDeadlines.length > 0) {
+      const cd = c.commonDeadlines[0];
+      setDeadlineType(cd.type);
+      const year = new Date().getFullYear();
+      const [mm, dd] = cd.defaultDate.split("-");
+      // Guess year: if month-day is already past, use next year
+      const candidate = new Date(`${year}-${mm}-${dd}T00:00:00`);
+      const useYear = candidate < new Date() ? year + 1 : year;
+      setDeadlineDate(`${useYear}-${mm}-${dd}`);
+    }
+  };
+
+  const presetDates = selectedCollege
+    ? TOP_COLLEGES.find((c) => c.id === selectedCollege.id)?.commonDeadlines ?? []
+    : [];
+
+  const applyPreset = (preset: { type: string; defaultDate: string }) => {
+    setDeadlineType(preset.type);
+    const year = new Date().getFullYear();
+    const [mm, dd] = preset.defaultDate.split("-");
+    const candidate = new Date(`${year}-${mm}-${dd}T00:00:00`);
+    const useYear = candidate < new Date() ? year + 1 : year;
+    setDeadlineDate(`${useYear}-${mm}-${dd}`);
+  };
+
+  const handleAdd = () => {
+    const name = isManual ? manualName.trim() : selectedCollege?.name ?? "";
+    if (!name) { alert("Please enter a college name."); return; }
+    if (!deadlineDate) { alert("Please select a deadline date."); return; }
+    onAdd({
+      college_id: isManual ? "" : (selectedCollege?.id ?? ""),
+      college_name: name,
+      deadline_type: deadlineType,
+      deadline_date: deadlineDate,
+      notes: notes.trim(),
+    });
+  };
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
+        setShowDropdown(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  return (
+    <div style={{
+      position: "fixed", inset: 0, background: "rgba(0,0,0,0.65)",
+      display: "flex", alignItems: "center", justifyContent: "center",
+      zIndex: 100, padding: 24,
+    }}>
+      <div className="fade-in" style={{
+        background: "var(--surface)", border: "1.5px solid var(--border)",
+        borderRadius: "var(--radius)", padding: 32, width: "100%", maxWidth: 520,
+        maxHeight: "90vh", overflowY: "auto",
+      }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
+          <h2 style={{ fontWeight: 800, fontSize: 20 }}>Add Deadline</h2>
+          <button onClick={onCancel} style={{ color: "var(--text-muted)", fontSize: 20, lineHeight: 1 }}>✕</button>
+        </div>
+
+        {/* Mode toggle */}
+        <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+          <button
+            onClick={() => setIsManual(false)}
+            style={{
+              flex: 1, padding: "8px 0", borderRadius: "var(--radius-sm)", fontWeight: 600, fontSize: 13,
+              background: !isManual ? "var(--accent)" : "var(--surface2)",
+              color: !isManual ? "#fff" : "var(--text-muted)",
+            }}
+          >
+            🔍 Search Colleges
+          </button>
+          <button
+            onClick={() => setIsManual(true)}
+            style={{
+              flex: 1, padding: "8px 0", borderRadius: "var(--radius-sm)", fontWeight: 600, fontSize: 13,
+              background: isManual ? "var(--accent)" : "var(--surface2)",
+              color: isManual ? "#fff" : "var(--text-muted)",
+            }}
+          >
+            ✏️ Enter Manually
+          </button>
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          {/* College input */}
+          {isManual ? (
+            <div>
+              <label style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 6, color: "var(--text-muted)" }}>
+                College Name
+              </label>
+              <input
+                placeholder="e.g. University of Example"
+                value={manualName}
+                onChange={(e) => setManualName(e.target.value)}
+              />
+            </div>
+          ) : (
+            <div ref={searchRef} style={{ position: "relative" }}>
+              <label style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 6, color: "var(--text-muted)" }}>
+                Search College
+              </label>
+              <input
+                placeholder="Type to search 200+ colleges…"
+                value={searchQuery}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  setSelectedCollege(null);
+                  setShowDropdown(true);
+                }}
+                onFocus={() => setShowDropdown(true)}
+              />
+              {showDropdown && filtered.length > 0 && (
+                <div style={{
+                  position: "absolute", top: "100%", left: 0, right: 0,
+                  background: "var(--surface2)", border: "1.5px solid var(--border)",
+                  borderRadius: "var(--radius-sm)", zIndex: 200, marginTop: 4,
+                  maxHeight: 260, overflowY: "auto",
+                }}>
+                  {filtered.map((c) => (
+                    <div
+                      key={c.id}
+                      onClick={() => selectCollege(c)}
+                      style={{
+                        padding: "10px 14px", cursor: "pointer",
+                        borderBottom: "1px solid var(--border)",
+                      }}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface)")}
+                      onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                    >
+                      <div style={{ fontWeight: 600, fontSize: 14 }}>{c.name}</div>
+                      <div style={{ color: "var(--text-muted)", fontSize: 12 }}>{c.location}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Preset deadline buttons */}
+          {!isManual && presetDates.length > 0 && (
+            <div>
+              <label style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 8, color: "var(--text-muted)" }}>
+                Common Deadlines (click to auto-fill)
+              </label>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {presetDates.map((pd, i) => (
+                  <button
+                    key={i}
+                    onClick={() => applyPreset(pd)}
+                    style={{
+                      background: "var(--surface2)", border: "1.5px solid var(--border)",
+                      borderRadius: "var(--radius-sm)", padding: "6px 12px",
+                      fontSize: 13, fontWeight: 600, color: "var(--accent2)",
+                      transition: "border-color 0.2s",
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.borderColor = "var(--accent)")}
+                    onMouseLeave={(e) => (e.currentTarget.style.borderColor = "var(--border)")}
+                  >
+                    {pd.type} · {pd.defaultDate}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Deadline type */}
+          <div>
+            <label style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 6, color: "var(--text-muted)" }}>
+              Deadline Type
+            </label>
+            <select value={deadlineType} onChange={(e) => setDeadlineType(e.target.value)}>
+              {deadlineTypes.map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+
+          {/* Date */}
+          <div>
+            <label style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 6, color: "var(--text-muted)" }}>
+              Deadline Date
+            </label>
+            <input
+              type="date"
+              value={deadlineDate}
+              onChange={(e) => setDeadlineDate(e.target.value)}
+            />
+          </div>
+
+          {/* Notes */}
+          <div>
+            <label style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 6, color: "var(--text-muted)" }}>
+              Notes (optional)
+            </label>
+            <textarea
+              placeholder="e.g. need SAT scores, essay prompt 2…"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={2}
+              style={{ resize: "vertical" }}
+            />
+          </div>
+
+          <div style={{ display: "flex", gap: 10, marginTop: 4 }}>
+            <button
+              onClick={onCancel}
+              style={{
+                flex: 1, padding: "11px 0", borderRadius: "var(--radius-sm)",
+                background: "var(--surface2)", color: "var(--text-muted)", fontWeight: 600,
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleAdd}
+              style={{
+                flex: 2, padding: "11px 0", borderRadius: "var(--radius-sm)",
+                background: "var(--accent)", color: "#fff", fontWeight: 700, fontSize: 15,
+              }}
+            >
+              Add Deadline
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Main App ──────────────────────────────────────────────── */
 export default function Home() {
-  const [step, setStep] = useState<Step>("onboarding");
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [savedDeadlines, setSavedDeadlines] = useState<SavedDeadline[]>([]);
-  const [search, setSearch] = useState("");
-  const [filterType, setFilterType] = useState<DeadlineType | "all">("all");
-  const [filterUrgency, setFilterUrgency] = useState<"all" | "urgent" | "soon" | "upcoming" | "past">("all");
-  const [sortBy, setSortBy] = useState<"date" | "school" | "urgency">("date");
-  const [activeTab, setActiveTab] = useState<"timeline" | "list">("timeline");
-  const [expandedSchool, setExpandedSchool] = useState<string | null>(null);
-  const [onboardingName, setOnboardingName] = useState("");
-  const [onboardingGrad, setOnboardingGrad] = useState("2025");
+  const [user, setUser] = useState<User | null>(null);
+  const [view, setView] = useState<View>("auth");
+  const [deadlines, setDeadlines] = useState<Deadline[]>([]);
+  const [showAdd, setShowAdd] = useState(false);
+  const [filter, setFilter] = useState<"all" | "upcoming" | "past">("upcoming");
+  const [sortBy, setSortBy] = useState<"date" | "urgency" | "school">("date");
+  const [loading, setLoading] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [searchFilter, setSearchFilter] = useState("");
 
+  // Track page
   useEffect(() => {
     fetch("/api/track", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ path: window.location.pathname }),
     }).catch(() => {});
+  }, []);
 
-    const saved = localStorage.getItem("edutracker_state");
+  // Check localStorage for persisted session
+  useEffect(() => {
+    const saved = localStorage.getItem("edutracker_user");
     if (saved) {
       try {
-        const parsed = JSON.parse(saved);
-        if (parsed.step) setStep(parsed.step);
-        if (parsed.selectedIds) setSelectedIds(new Set(parsed.selectedIds));
-        if (parsed.savedDeadlines) setSavedDeadlines(parsed.savedDeadlines);
-        if (parsed.onboardingName) setOnboardingName(parsed.onboardingName);
-        if (parsed.onboardingGrad) setOnboardingGrad(parsed.onboardingGrad);
+        const u = JSON.parse(saved) as User;
+        setUser(u);
+        setView("dashboard");
       } catch {}
     }
   }, []);
 
-  function persist(updates: {
-    step?: Step;
-    selectedIds?: Set<string>;
-    savedDeadlines?: SavedDeadline[];
-  }) {
-    const current = {
-      step,
-      selectedIds: [...selectedIds],
-      savedDeadlines,
-      onboardingName,
-      onboardingGrad,
-      ...updates,
-      selectedIds: updates.selectedIds ? [...updates.selectedIds] : [...selectedIds],
-    };
-    localStorage.setItem("edutracker_state", JSON.stringify(current));
-  }
+  // Load deadlines when user changes
+  const loadDeadlines = useCallback(async (email: string) => {
+    setLoading(true);
+    // Start from localStorage
+    const local = loadLocal(email);
+    setDeadlines(local);
+    // Sync from DB
+    try {
+      const res = await fetch(`/api/deadlines?email=${encodeURIComponent(email)}`);
+      const data = await res.json();
+      if (data.deadlines && data.deadlines.length > 0) {
+        const dbDeadlines: Deadline[] = data.deadlines.map((r: {
+          id: number | string;
+          college_id: string;
+          college_name: string;
+          deadline_type: string;
+          deadline_date: string;
+          notes: string;
+        }) => ({
+          id: String(r.id),
+          college_id: r.college_id,
+          college_name: r.college_name,
+          deadline_type: r.deadline_type,
+          deadline_date: r.deadline_date,
+          notes: r.notes,
+        }));
+        setDeadlines(dbDeadlines);
+        saveLocal(email, dbDeadlines);
+      }
+    } catch {}
+    setLoading(false);
+  }, []);
 
-  function handleOnboardingContinue() {
-    persist({ step: "select" });
-    setStep("select");
-  }
+  useEffect(() => {
+    if (user) loadDeadlines(user.email);
+  }, [user, loadDeadlines]);
 
-  function toggleCollege(id: string) {
-    const next = new Set(selectedIds);
-    if (next.has(id)) {
-      next.delete(id);
-    } else {
-      if (next.size >= 20) return;
-      next.add(id);
-    }
-    setSelectedIds(next);
-  }
+  const handleAuth = (u: User) => {
+    setUser(u);
+    localStorage.setItem("edutracker_user", JSON.stringify(u));
+    setView("dashboard");
+  };
 
-  function buildDeadlines(ids: Set<string>): SavedDeadline[] {
-    const result: SavedDeadline[] = [];
-    ids.forEach((id) => {
-      const college = COLLEGES.find((c) => c.id === id);
-      if (!college) return;
-      (Object.keys(college.deadlines) as DeadlineType[]).forEach((type) => {
-        const date = college.deadlines[type];
-        if (date) {
-          result.push({
-            collegeId: id,
-            collegeName: college.name,
-            type,
-            date,
-            label: DEADLINE_LABELS[type],
-          });
-        }
+  const handleLogout = () => {
+    setUser(null);
+    setDeadlines([]);
+    setView("auth");
+    localStorage.removeItem("edutracker_user");
+  };
+
+  const handleAddDeadline = async (d: Omit<Deadline, "id">) => {
+    if (!user) return;
+    const tempId = `local_${Date.now()}`;
+    const newDl: Deadline = { ...d, id: tempId };
+    const updated = [...deadlines, newDl].sort((a, b) => a.deadline_date.localeCompare(b.deadline_date));
+    setDeadlines(updated);
+    saveLocal(user.email, updated);
+    setShowAdd(false);
+
+    // Persist to DB
+    setSyncing(true);
+    try {
+      const res = await fetch("/api/deadlines", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: user.email, ...d }),
       });
+      const data = await res.json();
+      if (data.deadline) {
+        const withRealId = updated.map((dl) =>
+          dl.id === tempId ? { ...dl, id: String(data.deadline.id) } : dl
+        );
+        setDeadlines(withRealId);
+        saveLocal(user.email, withRealId);
+      }
+    } catch {}
+    setSyncing(false);
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!user) return;
+    const updated = deadlines.filter((d) => d.id !== id);
+    setDeadlines(updated);
+    saveLocal(user.email, updated);
+
+    if (!id.startsWith("local_")) {
+      try {
+        await fetch(`/api/deadlines?id=${id}&email=${encodeURIComponent(user.email)}`, {
+          method: "DELETE",
+        });
+      } catch {}
+    }
+  };
+
+  // Filter & sort
+  const visibleDeadlines = deadlines
+    .filter((d) => {
+      const days = daysUntil(d.deadline_date);
+      if (filter === "upcoming" && days < 0) return false;
+      if (filter === "past" && days >= 0) return false;
+      if (searchFilter) {
+        const q = searchFilter.toLowerCase();
+        return d.college_name.toLowerCase().includes(q) || d.deadline_type.toLowerCase().includes(q);
+      }
+      return true;
+    })
+    .sort((a, b) => {
+      if (sortBy === "date") return a.deadline_date.localeCompare(b.deadline_date);
+      if (sortBy === "urgency") return daysUntil(a.deadline_date) - daysUntil(b.deadline_date);
+      return a.college_name.localeCompare(b.college_name);
     });
-    return result.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+  const stats = {
+    total: deadlines.filter((d) => daysUntil(d.deadline_date) >= 0).length,
+    critical: deadlines.filter((d) => { const days = daysUntil(d.deadline_date); return days >= 0 && days < 7; }).length,
+    soon: deadlines.filter((d) => { const days = daysUntil(d.deadline_date); return days >= 7 && days < 30; }).length,
+    safe: deadlines.filter((d) => daysUntil(d.deadline_date) >= 30).length,
+  };
+
+  if (view === "auth") {
+    return <AuthPanel onAuth={handleAuth} />;
   }
-
-  function handleConfirmSelection() {
-    const deadlines = buildDeadlines(selectedIds);
-    setSavedDeadlines(deadlines);
-    persist({ step: "dashboard", selectedIds, savedDeadlines: deadlines });
-    setStep("dashboard");
-  }
-
-  function handleReset() {
-    localStorage.removeItem("edutracker_state");
-    setStep("onboarding");
-    setSelectedIds(new Set());
-    setSavedDeadlines([]);
-    setSearch("");
-    setOnboardingName("");
-    setOnboardingGrad("2025");
-  }
-
-  function removeCollege(id: string) {
-    const next = new Set(selectedIds);
-    next.delete(id);
-    setSelectedIds(next);
-    const deadlines = buildDeadlines(next);
-    setSavedDeadlines(deadlines);
-    persist({ selectedIds: next, savedDeadlines: deadlines });
-  }
-
-  const filteredColleges = COLLEGES.filter((c) =>
-    c.name.toLowerCase().includes(search.toLowerCase()) ||
-    c.location.toLowerCase().includes(search.toLowerCase())
-  );
-
-  const filteredDeadlines = savedDeadlines.filter((d) => {
-    if (filterType !== "all" && d.type !== filterType) return false;
-    const days = daysUntil(d.date);
-    if (filterUrgency === "urgent" && !(days >= 0 && days < 14)) return false;
-    if (filterUrgency === "soon" && !(days >= 14 && days < 30)) return false;
-    if (filterUrgency === "upcoming" && days < 30) return false;
-    if (filterUrgency === "past" && days >= 0) return false;
-    return true;
-  });
-
-  const sortedDeadlines = [...filteredDeadlines].sort((a, b) => {
-    if (sortBy === "date") return new Date(a.date).getTime() - new Date(b.date).getTime();
-    if (sortBy === "school") return a.collegeName.localeCompare(b.collegeName);
-    if (sortBy === "urgency") return daysUntil(a.date) - daysUntil(b.date);
-    return 0;
-  });
-
-  const groupedBySchool: Record<string, SavedDeadline[]> = {};
-  savedDeadlines.forEach((d) => {
-    if (!groupedBySchool[d.collegeId]) groupedBySchool[d.collegeId] = [];
-    groupedBySchool[d.collegeId].push(d);
-  });
-
-  const nextDeadline = savedDeadlines.find((d) => daysUntil(d.date) >= 0);
-  const urgentCount = savedDeadlines.filter((d) => {
-    const days = daysUntil(d.date);
-    return days >= 0 && days < 14;
-  }).length;
-
-  if (step === "onboarding") {
-    return (
-      <div style={{ minHeight: "100vh", background: "linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #0f172a 100%)", display: "flex", alignItems: "center", justifyContent: "center", padding: "2rem", fontFamily: "'Inter', -apple-system, sans-serif" }}>
-        <div style={{ maxWidth: 520, width: "100%", textAlign: "center" }}>
-          <div style={{ marginBottom: "2rem" }}>
-            <div style={{ display: "inline-flex", alignItems: "center", gap: "0.75rem", background: "rgba(99,102,241,0.15)", border: "1px solid rgba(99,102,241,0.3)", borderRadius: "3rem", padding: "0.5rem 1.25rem", marginBottom: "2rem" }}>
-              <span style={{ fontSize: "1.5rem" }}>🎓</span>
-              <span style={{ color: "#a5b4fc", fontWeight: 600, fontSize: "0.95rem", letterSpacing: "0.05em" }}>EDUTRACKER</span>
-            </div>
-            <h1 style={{ fontSize: "clamp(2rem, 5vw, 3rem)", fontWeight: 800, color: "#f8fafc", lineHeight: 1.15, marginBottom: "1rem" }}>
-              Never miss a<br />
-              <span style={{ background: "linear-gradient(90deg, #818cf8, #c084fc)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>college deadline</span>
-            </h1>
-            <p style={{ color: "#94a3b8", fontSize: "1.1rem", lineHeight: 1.6, marginBottom: "2.5rem" }}>
-              Track EA, ED, RD, and financial aid deadlines for 200 top US colleges — all in one place.
-            </p>
-          </div>
-
-          <div style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "1.25rem", padding: "2rem", backdropFilter: "blur(10px)", marginBottom: "1.5rem" }}>
-            <div style={{ marginBottom: "1.25rem", textAlign: "left" }}>
-              <label style={{ display: "block", color: "#94a3b8", fontSize: "0.85rem", fontWeight: 600, marginBottom: "0.5rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>Your First Name</label>
-              <input
-                type="text"
-                value={onboardingName}
-                onChange={(e) => setOnboardingName(e.target.value)}
-                placeholder="e.g. Alex"
-                style={{ width: "100%", padding: "0.75rem 1rem", borderRadius: "0.75rem", border: "1px solid rgba(255,255,255,0.15)", background: "rgba(255,255,255,0.07)", color: "#f8fafc", fontSize: "1rem", outline: "none", boxSizing: "border-box" }}
-              />
-            </div>
-            <div style={{ marginBottom: "1.5rem", textAlign: "left" }}>
-              <label style={{ display: "block", color: "#94a3b8", fontSize: "0.85rem", fontWeight: 600, marginBottom: "0.5rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>Graduation Year</label>
-              <select
-                value={onboardingGrad}
-                onChange={(e) => setOnboardingGrad(e.target.value)}
-                style={{ width: "100%", padding: "0.75rem 1rem", borderRadius: "0.75rem", border: "1px solid rgba(255,255,255,0.15)", background: "rgba(30,27,75,0.9)", color: "#f8fafc", fontSize: "1rem", outline: "none", boxSizing: "border-box" }}
-              >
-                <option value="2025">Class of 2025</option>
-                <option value="2026">Class of 2026</option>
-                <option value="2027">Class of 2027</option>
-              </select>
-            </div>
-            <button
-              onClick={handleOnboardingContinue}
-              style={{ width: "100%", padding: "0.9rem", background: "linear-gradient(135deg, #6366f1, #8b5cf6)", color: "#fff", border: "none", borderRadius: "0.75rem", fontSize: "1rem", fontWeight: 700, cursor: "pointer", letterSpacing: "0.02em" }}
-            >
-              Get Started →
-            </button>
-          </div>
-
-          <div style={{ display: "flex", justifyContent: "center", gap: "2rem" }}>
-            {[["200+", "Colleges"], ["5", "Deadline Types"], ["Free", "Forever"]].map(([num, label]) => (
-              <div key={label} style={{ textAlign: "center" }}>
-                <div style={{ color: "#818cf8", fontWeight: 800, fontSize: "1.25rem" }}>{num}</div>
-                <div style={{ color: "#64748b", fontSize: "0.8rem" }}>{label}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (step === "select") {
-    return (
-      <div style={{ minHeight: "100vh", background: "#0f172a", fontFamily: "'Inter', -apple-system, sans-serif" }}>
-        {/* Header */}
-        <div style={{ background: "rgba(15,23,42,0.95)", borderBottom: "1px solid rgba(255,255,255,0.08)", padding: "1rem 1.5rem", position: "sticky", top: 0, zIndex: 50, backdropFilter: "blur(10px)" }}>
-          <div style={{ maxWidth: 1100, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem", flexWrap: "wrap" }}>
-            <div>
-              <div style={{ color: "#a5b4fc", fontWeight: 700, fontSize: "0.8rem", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: "0.15rem" }}>🎓 Edutracker</div>
-              <h2 style={{ color: "#f8fafc", fontWeight: 700, fontSize: "1.15rem", margin: 0 }}>
-                Select Your Schools
-              </h2>
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
-              <div style={{ background: "rgba(99,102,241,0.15)", border: "1px solid rgba(99,102,241,0.3)", borderRadius: "2rem", padding: "0.4rem 1rem", color: "#a5b4fc", fontSize: "0.9rem", fontWeight: 600 }}>
-                {selectedIds.size}/20 selected
-              </div>
-              <button
-                onClick={handleConfirmSelection}
-                disabled={selectedIds.size === 0}
-                style={{ background: selectedIds.size === 0 ? "#334155" : "linear-gradient(135deg, #6366f1, #8b5cf6)", color: selectedIds.size === 0 ? "#64748b" : "#fff", border: "none", borderRadius: "0.65rem", padding: "0.6rem 1.25rem", fontWeight: 700, fontSize: "0.95rem", cursor: selectedIds.size === 0 ? "not-allowed" : "pointer" }}
-              >
-                Build My Calendar →
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div style={{ maxWidth: 1100, margin: "0 auto", padding: "1.5rem" }}>
-          <input
-            type="text"
-            placeholder="Search colleges by name or state..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            style={{ width: "100%", padding: "0.85rem 1.25rem", borderRadius: "0.85rem", border: "1px solid rgba(255,255,255,0.1)", background: "rgba(255,255,255,0.05)", color: "#f8fafc", fontSize: "1rem", outline: "none", marginBottom: "1.5rem", boxSizing: "border-box" }}
-          />
-
-          {selectedIds.size > 0 && (
-            <div style={{ background: "rgba(99,102,241,0.1)", border: "1px solid rgba(99,102,241,0.25)", borderRadius: "1rem", padding: "1rem 1.25rem", marginBottom: "1.5rem" }}>
-              <div style={{ color: "#94a3b8", fontSize: "0.8rem", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "0.75rem" }}>Selected Schools</div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem" }}>
-                {[...selectedIds].map((id) => {
-                  const c = COLLEGES.find((x) => x.id === id);
-                  return c ? (
-                    <div key={id} style={{ background: "rgba(99,102,241,0.2)", border: "1px solid rgba(99,102,241,0.4)", borderRadius: "2rem", padding: "0.3rem 0.85rem", color: "#a5b4fc", fontSize: "0.85rem", fontWeight: 600, display: "flex", alignItems: "center", gap: "0.4rem" }}>
-                      {c.name}
-                      <button onClick={() => toggleCollege(id)} style={{ background: "none", border: "none", color: "#6366f1", cursor: "pointer", fontSize: "1rem", lineHeight: 1, padding: 0 }}>×</button>
-                    </div>
-                  ) : null;
-                })}
-              </div>
-            </div>
-          )}
-
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: "0.85rem" }}>
-            {filteredColleges.map((college) => {
-              const isSelected = selectedIds.has(college.id);
-              const hasEd = !!college.deadlines.ed;
-              const hasEa = !!college.deadlines.ea;
-              return (
-                <div
-                  key={college.id}
-                  onClick={() => toggleCollege(college.id)}
-                  style={{
-                    background: isSelected ? "rgba(99,102,241,0.15)" : "rgba(255,255,255,0.03)",
-                    border: isSelected ? "1.5px solid rgba(99,102,241,0.5)" : "1px solid rgba(255,255,255,0.07)",
-                    borderRadius: "1rem",
-                    padding: "1rem 1.25rem",
-                    cursor: selectedIds.size >= 20 && !isSelected ? "not-allowed" : "pointer",
-                    transition: "all 0.15s",
-                    opacity: selectedIds.size >= 20 && !isSelected ? 0.5 : 1,
-                  }}
-                >
-                  <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "0.5rem" }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ color: "#f1f5f9", fontWeight: 700, fontSize: "0.95rem", marginBottom: "0.2rem", lineHeight: 1.3 }}>{college.name}</div>
-                      <div style={{ color: "#64748b", fontSize: "0.8rem", marginBottom: "0.6rem" }}>{college.location}</div>
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: "0.35rem" }}>
-                        {hasEd && <span style={{ background: "rgba(236,72,153,0.15)", color: "#f472b6", border: "1px solid rgba(236,72,153,0.25)", borderRadius: "0.35rem", padding: "0.15rem 0.5rem", fontSize: "0.7rem", fontWeight: 600 }}>ED {college.deadlines.ed}</span>}
-                        {hasEa && <span style={{ background: "rgba(99,102,241,0.15)", color: "#a5b4fc", border: "1px solid rgba(99,102,241,0.25)", borderRadius: "0.35rem", padding: "0.15rem 0.5rem", fontSize: "0.7rem", fontWeight: 600 }}>EA {college.deadlines.ea}</span>}
-                        {college.deadlines.ed2 && <span style={{ background: "rgba(249,115,22,0.15)", color: "#fb923c", border: "1px solid rgba(249,115,22,0.25)", borderRadius: "0.35rem", padding: "0.15rem 0.5rem", fontSize: "0.7rem", fontWeight: 600 }}>ED2 {college.deadlines.ed2}</span>}
-                        <span style={{ background: "rgba(14,165,233,0.15)", color: "#38bdf8", border: "1px solid rgba(14,165,233,0.25)", borderRadius: "0.35rem", padding: "0.15rem 0.5rem", fontSize: "0.7rem", fontWeight: 600 }}>RD {college.deadlines.rd}</span>
-                      </div>
-                    </div>
-                    <div style={{ width: 24, height: 24, borderRadius: "50%", border: isSelected ? "2px solid #6366f1" : "2px solid #334155", background: isSelected ? "#6366f1" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, transition: "all 0.15s" }}>
-                      {isSelected && <span style={{ color: "#fff", fontSize: "0.75rem", fontWeight: 700 }}>✓</span>}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // Dashboard
-  const selectedColleges = COLLEGES.filter((c) => selectedIds.has(c.id));
 
   return (
-    <div style={{ minHeight: "100vh", background: "#0f172a", fontFamily: "'Inter', -apple-system, sans-serif", color: "#f8fafc" }}>
+    <div style={{ minHeight: "100vh", background: "var(--bg)" }}>
       {/* Header */}
-      <div style={{ background: "rgba(15,23,42,0.97)", borderBottom: "1px solid rgba(255,255,255,0.08)", padding: "1rem 1.5rem", position: "sticky", top: 0, zIndex: 50, backdropFilter: "blur(10px)" }}>
-        <div style={{ maxWidth: 1200, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem", flexWrap: "wrap" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
-            <span style={{ fontSize: "1.5rem" }}>🎓</span>
-            <div>
-              <div style={{ color: "#a5b4fc", fontWeight: 700, fontSize: "0.75rem", letterSpacing: "0.1em", textTransform: "uppercase" }}>Edutracker</div>
-              <div style={{ color: "#f8fafc", fontWeight: 700, fontSize: "1.1rem" }}>
-                {onboardingName ? `${onboardingName}'s` : "My"} College Deadlines
-              </div>
-            </div>
+      <header style={{
+        background: "var(--surface)", borderBottom: "1.5px solid var(--border)",
+        padding: "0 24px", position: "sticky", top: 0, zIndex: 50,
+      }}>
+        <div style={{
+          maxWidth: 900, margin: "0 auto", display: "flex",
+          alignItems: "center", justifyContent: "space-between", height: 60,
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 24 }}>🎓</span>
+            <span style={{ fontWeight: 800, fontSize: 18, color: "var(--accent2)" }}>Edutracker</span>
+            {syncing && <span style={{ fontSize: 11, color: "var(--text-muted)" }} className="pulsing">syncing…</span>}
           </div>
-          <div style={{ display: "flex", gap: "0.75rem" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+            <span style={{ color: "var(--text-muted)", fontSize: 13 }}>{user?.email}</span>
             <button
-              onClick={() => { persist({ step: "select" }); setStep("select"); }}
-              style={{ background: "rgba(99,102,241,0.15)", border: "1px solid rgba(99,102,241,0.3)", color: "#a5b4fc", borderRadius: "0.65rem", padding: "0.5rem 1rem", fontWeight: 600, fontSize: "0.85rem", cursor: "pointer" }}
+              onClick={handleLogout}
+              style={{
+                color: "var(--text-muted)", fontSize: 13, borderRadius: "var(--radius-sm)",
+                padding: "5px 12px", border: "1px solid var(--border)",
+              }}
             >
-              + Add Schools
-            </button>
-            <button
-              onClick={handleReset}
-              style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", color: "#64748b", borderRadius: "0.65rem", padding: "0.5rem 1rem", fontWeight: 600, fontSize: "0.85rem", cursor: "pointer" }}
-            >
-              Reset
+              Log out
             </button>
           </div>
         </div>
-      </div>
+      </header>
 
-      <div style={{ maxWidth: 1200, margin: "0 auto", padding: "1.5rem" }}>
-        {/* Stats Row */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "1rem", marginBottom: "1.75rem" }}>
+      {/* Main */}
+      <main style={{ maxWidth: 900, margin: "0 auto", padding: "32px 24px" }}>
+        {/* Stats cards */}
+        <div style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+          gap: 12, marginBottom: 28,
+        }}>
           {[
-            { label: "Schools Tracking", value: selectedIds.size, icon: "🏫", color: "#818cf8" },
-            { label: "Total Deadlines", value: savedDeadlines.length, icon: "📅", color: "#38bdf8" },
-            { label: "Urgent (<14 days)", value: urgentCount, icon: "🔴", color: "#ef4444" },
-            { label: "Next Deadline", value: nextDeadline ? `${daysUntil(nextDeadline.date)}d` : "—", icon: "⏰", color: "#f59e0b" },
-          ].map((stat) => (
-            <div key={stat.label} style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: "1rem", padding: "1.1rem 1.25rem" }}>
-              <div style={{ fontSize: "1.4rem", marginBottom: "0.35rem" }}>{stat.icon}</div>
-              <div style={{ fontSize: "1.6rem", fontWeight: 800, color: stat.color, lineHeight: 1 }}>{stat.value}</div>
-              <div style={{ color: "#64748b", fontSize: "0.78rem", marginTop: "0.25rem" }}>{stat.label}</div>
+            { label: "Upcoming", value: stats.total, color: "var(--text)" },
+            { label: "Critical (<7d)", value: stats.critical, color: "var(--red)" },
+            { label: "Soon (<30d)", value: stats.soon, color: "var(--yellow)" },
+            { label: "On Track", value: stats.safe, color: "var(--green)" },
+          ].map((s) => (
+            <div key={s.label} style={{
+              background: "var(--surface)", border: "1.5px solid var(--border)",
+              borderRadius: "var(--radius)", padding: "16px 20px",
+            }}>
+              <div style={{ fontSize: 28, fontWeight: 800, color: s.color }}>{s.value}</div>
+              <div style={{ fontSize: 13, color: "var(--text-muted)", marginTop: 2 }}>{s.label}</div>
             </div>
           ))}
         </div>
 
-        {/* Next Deadline Banner */}
-        {nextDeadline && daysUntil(nextDeadline.date) < 30 && (
-          <div style={{ background: daysUntil(nextDeadline.date) < 14 ? "rgba(239,68,68,0.1)" : "rgba(245,158,11,0.1)", border: `1px solid ${daysUntil(nextDeadline.date) < 14 ? "rgba(239,68,68,0.3)" : "rgba(245,158,11,0.3)"}`, borderRadius: "1rem", padding: "1rem 1.5rem", marginBottom: "1.5rem", display: "flex", alignItems: "center", gap: "1rem" }}>
-            <div style={{ fontSize: "1.5rem" }}>{daysUntil(nextDeadline.date) < 14 ? "🚨" : "⚠️"}</div>
-            <div>
-              <div style={{ fontWeight: 700, color: daysUntil(nextDeadline.date) < 14 ? "#fca5a5" : "#fcd34d", fontSize: "0.95rem" }}>
-                {daysUntil(nextDeadline.date) === 0 ? "Due TODAY" : `${daysUntil(nextDeadline.date)} days left`}: {nextDeadline.collegeName} — {DEADLINE_LABELS[nextDeadline.type]}
-              </div>
-              <div style={{ color: "#94a3b8", fontSize: "0.82rem" }}>
-                {new Date(nextDeadline.date).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
-              </div>
-            </div>
+        {/* Controls */}
+        <div style={{
+          display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 20,
+          alignItems: "center",
+        }}>
+          <div style={{ flex: 1, minWidth: 180 }}>
+            <input
+              placeholder="Search deadlines…"
+              value={searchFilter}
+              onChange={(e) => setSearchFilter(e.target.value)}
+              style={{ width: "100%" }}
+            />
           </div>
-        )}
 
-        {/* Tabs */}
-        <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1.25rem", background: "rgba(255,255,255,0.04)", borderRadius: "0.85rem", padding: "0.3rem", width: "fit-content" }}>
-          {(["timeline", "list"] as const).map((tab) => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              style={{ padding: "0.5rem 1.25rem", borderRadius: "0.65rem", border: "none", background: activeTab === tab ? "rgba(99,102,241,0.25)" : "transparent", color: activeTab === tab ? "#a5b4fc" : "#64748b", fontWeight: 600, fontSize: "0.88rem", cursor: "pointer", textTransform: "capitalize" }}
-            >
-              {tab === "timeline" ? "📋 By School" : "📆 Timeline"}
-            </button>
-          ))}
-        </div>
-
-        {/* Filters */}
-        <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", marginBottom: "1.5rem", alignItems: "center" }}>
-          <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
-            {(["all", "ea", "ed", "ed2", "rd", "faid"] as const).map((t) => (
+          {/* Filter tabs */}
+          <div style={{
+            display: "flex", background: "var(--surface2)",
+            borderRadius: "var(--radius-sm)", padding: 3, gap: 3,
+          }}>
+            {(["upcoming", "all", "past"] as const).map((f) => (
               <button
-                key={t}
-                onClick={() => setFilterType(t)}
+                key={f}
+                onClick={() => setFilter(f)}
                 style={{
-                  padding: "0.35rem 0.85rem",
-                  borderRadius: "2rem",
-                  border: "1px solid",
-                  borderColor: filterType === t ? (t === "all" ? "#6366f1" : DEADLINE_COLORS[t as DeadlineType] || "#6366f1") : "rgba(255,255,255,0.1)",
-                  background: filterType === t ? (t === "all" ? "rgba(99,102,241,0.2)" : `${DEADLINE_COLORS[t as DeadlineType]}22`) : "transparent",
-                  color: filterType === t ? (t === "all" ? "#a5b4fc" : DEADLINE_COLORS[t as DeadlineType]) : "#64748b",
-                  fontSize: "0.78rem",
-                  fontWeight: 600,
-                  cursor: "pointer",
-                  textTransform: "uppercase",
-                  letterSpacing: "0.05em",
+                  padding: "6px 14px", borderRadius: "var(--radius-sm)", fontSize: 13, fontWeight: 600,
+                  background: filter === f ? "var(--accent)" : "transparent",
+                  color: filter === f ? "#fff" : "var(--text-muted)",
                 }}
               >
-                {t === "all" ? "All Types" : t === "faid" ? "Fin. Aid" : t.toUpperCase()}
+                {f.charAt(0).toUpperCase() + f.slice(1)}
               </button>
             ))}
           </div>
-          <div style={{ display: "flex", gap: "0.4rem" }}>
-            {(["all", "urgent", "soon", "upcoming", "past"] as const).map((u) => (
-              <button
-                key={u}
-                onClick={() => setFilterUrgency(u)}
-                style={{
-                  padding: "0.35rem 0.85rem",
-                  borderRadius: "2rem",
-                  border: `1px solid`,
-                  borderColor: filterUrgency === u ? (u === "urgent" ? "#ef4444" : u === "soon" ? "#f59e0b" : u === "upcoming" ? "#22c55e" : "rgba(255,255,255,0.2)") : "rgba(255,255,255,0.08)",
-                  background: filterUrgency === u ? (u === "urgent" ? "rgba(239,68,68,0.15)" : u === "soon" ? "rgba(245,158,11,0.15)" : u === "upcoming" ? "rgba(34,197,94,0.15)" : "rgba(255,255,255,0.05)") : "transparent",
-                  color: filterUrgency === u ? (u === "urgent" ? "#fca5a5" : u === "soon" ? "#fcd34d" : u === "upcoming" ? "#86efac" : "#94a3b8") : "#64748b",
-                  fontSize: "0.78rem",
-                  fontWeight: 600,
-                  cursor: "pointer",
-                  textTransform: "capitalize",
-                }}
-              >
-                {u === "all" ? "All" : u.charAt(0).toUpperCase() + u.slice(1)}
-              </button>
-            ))}
-          </div>
+
+          {/* Sort */}
           <select
             value={sortBy}
-            onChange={(e) => setSortBy(e.target.value as "date" | "school" | "urgency")}
-            style={{ marginLeft: "auto", padding: "0.4rem 0.85rem", borderRadius: "0.65rem", border: "1px solid rgba(255,255,255,0.1)", background: "rgba(255,255,255,0.05)", color: "#94a3b8", fontSize: "0.82rem", outline: "none" }}
+            onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+            style={{ width: "auto", padding: "8px 12px" }}
           >
             <option value="date">Sort: Date</option>
-            <option value="school">Sort: School</option>
             <option value="urgency">Sort: Urgency</option>
+            <option value="school">Sort: School</option>
           </select>
+
+          {/* Add button */}
+          <button
+            onClick={() => setShowAdd(true)}
+            style={{
+              background: "var(--accent)", color: "#fff",
+              borderRadius: "var(--radius-sm)", padding: "9px 20px",
+              fontWeight: 700, fontSize: 14, whiteSpace: "nowrap",
+            }}
+          >
+            + Add Deadline
+          </button>
         </div>
 
-        {/* By School View */}
-        {activeTab === "timeline" && (
-          <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-            {selectedColleges.map((college) => {
-              const cDeadlines = groupedBySchool[college.id] || [];
-              const minDays = Math.min(...cDeadlines.map((d) => daysUntil(d.date)).filter((d) => d >= 0));
-              const isExpanded = expandedSchool === college.id;
-              return (
-                <div key={college.id} style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: "1rem", overflow: "hidden" }}>
-                  <div
-                    onClick={() => setExpandedSchool(isExpanded ? null : college.id)}
-                    style={{ padding: "1rem 1.25rem", cursor: "pointer", display: "flex", alignItems: "center", gap: "1rem", justifyContent: "space-between" }}
-                  >
-                    <div style={{ display: "flex", alignItems: "center", gap: "1rem", flex: 1, minWidth: 0 }}>
-                      <div style={{ width: 4, height: 40, borderRadius: 2, background: isFinite(minDays) ? urgencyColor(minDays) : "#334155", flexShrink: 0 }} />
-                      <div style={{ minWidth: 0 }}>
-                        <div style={{ fontWeight: 700, fontSize: "1rem", color: "#f1f5f9" }}>{college.name}</div>
-                        <div style={{ color: "#64748b", fontSize: "0.8rem" }}>{college.location} · {cDeadlines.length} deadlines</div>
-                      </div>
-                    </div>
-                    <div style={{ display: "flex", align: "center", gap: "0.75rem", flexShrink: 0, alignItems: "center" }}>
-                      {isFinite(minDays) && (
-                        <div style={{ background: urgencyBg(minDays), border: `1px solid ${urgencyColor(minDays)}44`, borderRadius: "2rem", padding: "0.25rem 0.75rem", display: "flex", alignItems: "center", gap: "0.35rem" }}>
-                          <div style={{ width: 7, height: 7, borderRadius: "50%", background: urgencyColor(minDays) }} />
-                          <span style={{ color: urgencyColor(minDays), fontSize: "0.78rem", fontWeight: 700 }}>{minDays}d</span>
-                        </div>
-                      )}
-                      <button
-                        onClick={(e) => { e.stopPropagation(); removeCollege(college.id); }}
-                        style={{ background: "none", border: "none", color: "#475569", cursor: "pointer", fontSize: "1rem", padding: "0.25rem" }}
-                      >
-                        ✕
-                      </button>
-                      <span style={{ color: "#475569", transform: isExpanded ? "rotate(180deg)" : "rotate(0deg)", display: "inline-block", transition: "transform 0.2s" }}>▼</span>
-                    </div>
-                  </div>
-
-                  {isExpanded && (
-                    <div style={{ borderTop: "1px solid rgba(255,255,255,0.06)", padding: "1rem 1.25rem" }}>
-                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: "0.75rem" }}>
-                        {(["ed", "ea", "ed2", "rd", "faid"] as DeadlineType[]).map((type) => {
-                          const date = college.deadlines[type];
-                          if (!date) return null;
-                          const days = daysUntil(date);
-                          return (
-                            <div key={type} style={{ background: urgencyBg(days), border: `1px solid ${urgencyColor(days)}33`, borderRadius: "0.75rem", padding: "0.85rem 1rem" }}>
-                              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.4rem" }}>
-                                <span style={{ background: `${DEADLINE_COLORS[type]}22`, color: DEADLINE_COLORS[type], border: `1px solid ${DEADLINE_COLORS[type]}44`, borderRadius: "0.35rem", padding: "0.1rem 0.5rem", fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase" }}>
-                                  {type === "faid" ? "Fin. Aid" : type.toUpperCase()}
-                                </span>
-                                <span style={{ fontSize: "0.75rem", fontWeight: 700, color: urgencyColor(days) }}>{days < 0 ? "Passed" : `${days}d left`}</span>
-                              </div>
-                              <div style={{ color: "#1e293b", fontWeight: 700, fontSize: "0.9rem" }}>
-                                {new Date(date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
-                              </div>
-                              <div style={{ color: "#475569", fontSize: "0.75rem", marginTop: "0.2rem" }}>{DEADLINE_LABELS[type]}</div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+        {/* Deadline grid */}
+        {loading ? (
+          <div style={{ textAlign: "center", padding: "60px 0", color: "var(--text-muted)" }}>
+            Loading deadlines…
           </div>
-        )}
-
-        {/* Timeline View */}
-        {activeTab === "list" && (
-          <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
-            {sortedDeadlines.length === 0 && (
-              <div style={{ textAlign: "center", padding: "3rem", color: "#475569" }}>
-                <div style={{ fontSize: "2rem", marginBottom: "0.5rem" }}>🔍</div>
-                <div>No deadlines match your filters.</div>
-              </div>
-            )}
-            {sortedDeadlines.map((d, i) => {
-              const days = daysUntil(d.date);
-              return (
-                <div
-                  key={`${d.collegeId}-${d.type}-${i}`}
-                  style={{ background: urgencyBg(days), border: `1px solid ${urgencyColor(days)}33`, borderRadius: "0.85rem", padding: "1rem 1.25rem", display: "flex", alignItems: "center", gap: "1rem", flexWrap: "wrap" }}
-                >
-                  <div style={{ width: 4, height: 44, borderRadius: 2, background: urgencyColor(days), flexShrink: 0 }} />
-                  <div style={{ flex: 1, minWidth: 200 }}>
-                    <div style={{ fontWeight: 700, color: "#1e293b", fontSize: "0.95rem" }}>{d.collegeName}</div>
-                    <div style={{ color: "#475569", fontSize: "0.8rem", marginTop: "0.1rem" }}>{DEADLINE_LABELS[d.type]}</div>
-                  </div>
-                  <div style={{ textAlign: "center" }}>
-                    <div style={{ color: "#1e293b", fontWeight: 700, fontSize: "0.9rem" }}>
-                      {new Date(d.date).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}
-                    </div>
-                    <div style={{ color: "#64748b", fontSize: "0.75rem" }}>
-                      {new Date(d.date).toLocaleDateString("en-US", { year: "numeric" })}
-                    </div>
-                  </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                    <span style={{ background: `${DEADLINE_COLORS[d.type]}22`, color: DEADLINE_COLORS[d.type], border: `1px solid ${DEADLINE_COLORS[d.type]}44`, borderRadius: "0.35rem", padding: "0.2rem 0.6rem", fontSize: "0.75rem", fontWeight: 700, textTransform: "uppercase" }}>
-                      {d.type === "faid" ? "Fin. Aid" : d.type.toUpperCase()}
-                    </span>
-                    <div style={{ minWidth: 80, textAlign: "right" }}>
-                      <div style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem", background: "white", border: `1px solid ${urgencyColor(days)}44`, borderRadius: "2rem", padding: "0.25rem 0.75rem" }}>
-                        <div style={{ width: 7, height: 7, borderRadius: "50%", background: urgencyColor(days) }} />
-                        <span style={{ color: urgencyColor(days), fontSize: "0.78rem", fontWeight: 700 }}>
-                          {days < 0 ? "Passed" : days === 0 ? "Today!" : `${days}d`}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        {/* Legend */}
-        <div style={{ marginTop: "2rem", padding: "1rem 1.25rem", background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: "0.85rem", display: "flex", gap: "1.5rem", flexWrap: "wrap", alignItems: "center" }}>
-          <span style={{ color: "#475569", fontSize: "0.78rem", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>Urgency:</span>
-          {[["#ef4444", "< 14 days"], ["#f59e0b", "14–30 days"], ["#22c55e", "> 30 days"], ["#94a3b8", "Past"]].map(([color, label]) => (
-            <div key={label} style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
-              <div style={{ width: 10, height: 10, borderRadius: "50%", background: color }} />
-              <span style={{ color: "#64748b", fontSize: "0.78rem" }}>{label}</span>
+        ) : visibleDeadlines.length === 0 ? (
+          <div style={{
+            textAlign: "center", padding: "80px 24px",
+            background: "var(--surface)", border: "1.5px solid var(--border)",
+            borderRadius: "var(--radius)",
+          }}>
+            <div style={{ fontSize: 48, marginBottom: 16 }}>📅</div>
+            <div style={{ fontWeight: 700, fontSize: 18, marginBottom: 8 }}>
+              {filter === "past" ? "No past deadlines" : "No deadlines yet"}
             </div>
-          ))}
-        </div>
-      </div>
+            <div style={{ color: "var(--text-muted)", marginBottom: 24, fontSize: 14 }}>
+              {filter === "past"
+                ? "Deadlines you've passed will appear here."
+                : "Add your first college deadline to get started!"}
+            </div>
+            {filter !== "past" && (
+              <button
+                onClick={() => setShowAdd(true)}
+                style={{
+                  background: "var(--accent)", color: "#fff",
+                  borderRadius: "var(--radius-sm)", padding: "12px 28px",
+                  fontWeight: 700, fontSize: 15,
+                }}
+              >
+                + Add Your First Deadline
+              </button>
+            )}
+          </div>
+        ) : (
+          <div style={{ display: "grid", gap: 12 }}>
+            {visibleDeadlines.map((dl) => (
+              <DeadlineCard key={dl.id} dl={dl} onDelete={handleDelete} />
+            ))}
+          </div>
+        )}
+      </main>
+
+      {/* Add panel modal */}
+      {showAdd && (
+        <AddDeadlinePanel
+          onAdd={handleAddDeadline}
+          onCancel={() => setShowAdd(false)}
+        />
+      )}
     </div>
   );
 }
