@@ -15,7 +15,6 @@ export async function POST(req: NextRequest) {
   const token = process.env.BLOB_READ_WRITE_TOKEN;
   if (!token) return NextResponse.json({ error: "Uploads are not configured on this deployment." }, { status: 500 });
 
-  // Only signed-in people can upload, so the storage bill stays yours.
   const email = getSessionEmail(req);
   if (!email) return NextResponse.json({ error: "Sign in first." }, { status: 401 });
 

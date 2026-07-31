@@ -1,92 +1,124 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useEffect, useState, useCallback } from "react";
 
-interface School {
-  id: string;
-  name: string;
-  location: string;
-  state: string;
-  type: "public" | "private";
-  earlyActionDeadline?: string;
-  earlyDecisionDeadline?: string;
-  regularDecisionDeadline?: string;
-  website: string;
-  acceptanceRate?: number;
-}
-
-interface Application {
-  id: string;
-  schoolId: string;
-  schoolName: string;
-  schoolLocation: string;
-  deadlineType: "EA" | "ED" | "RD";
-  deadlineDate: string; // YYYY-MM-DD
-  status: "planning" | "in-progress" | "submitted" | "accepted" | "rejected" | "waitlisted";
+interface DeadlineEntry {
+  id: number;
+  school_name: string;
+  application_type: string;
+  deadline_date: string;
   notes: string;
-  reminderSent?: boolean;
+  email_reminder_sent: boolean;
+  days_until: number;
 }
 
-const STATUS_COLORS: Record<Application["status"], string> = {
-  planning: "#94a3b8",
-  "in-progress": "#3b82f6",
-  submitted: "#8b5cf6",
-  accepted: "#22c55e",
-  rejected: "#ef4444",
-  waitlisted: "#f59e0b",
-};
-
-const STATUS_LABELS: Record<Application["status"], string> = {
-  planning: "Planning",
-  "in-progress": "In Progress",
-  submitted: "Submitted",
-  accepted: "Accepted",
-  rejected: "Rejected",
-  waitlisted: "Waitlisted",
-};
-
-function daysUntil(dateStr: string): number {
-  const now = new Date();
-  now.setHours(0, 0, 0, 0);
-  const d = new Date(dateStr + "T00:00:00");
-  return Math.ceil((d.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+interface User {
+  email: string;
 }
 
-function formatDate(dateStr: string): string {
-  const d = new Date(dateStr + "T00:00:00");
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-}
+const APPLICATION_TYPES = [
+  "Early Decision (ED)",
+  "Early Decision II (ED II)",
+  "Early Action (EA)",
+  "Restrictive Early Action (REA)",
+  "Regular Decision (RD)",
+  "Rolling Admission",
+  "Priority Deadline",
+];
 
-function urgencyColor(days: number): string {
-  if (days < 0) return "#6b7280";
-  if (days <= 7) return "#ef4444";
-  if (days <= 30) return "#f59e0b";
-  return "#22c55e";
+const POPULAR_SCHOOLS = [
+  "Harvard University",
+  "Yale University",
+  "Princeton University",
+  "Columbia University",
+  "University of Pennsylvania",
+  "Brown University",
+  "Dartmouth College",
+  "Cornell University",
+  "Duke University",
+  "Stanford University",
+  "MIT",
+  "Caltech",
+  "Northwestern University",
+  "Johns Hopkins University",
+  "Vanderbilt University",
+  "Rice University",
+  "Notre Dame",
+  "Georgetown University",
+  "Emory University",
+  "Carnegie Mellon University",
+  "UC Berkeley",
+  "UCLA",
+  "University of Michigan",
+  "University of Virginia",
+  "UNC Chapel Hill",
+  "Georgia Tech",
+  "University of Florida",
+  "University of Texas at Austin",
+  "Penn State",
+  "Ohio State University",
+  "Purdue University",
+  "University of Wisconsin-Madison",
+  "University of Illinois Urbana-Champaign",
+  "University of Washington",
+  "Boston University",
+  "Northeastern University",
+  "Tufts University",
+  "Wake Forest University",
+  "Tulane University",
+  "University of Southern California",
+  "New York University",
+  "Fordham University",
+  "Boston College",
+  "College of William & Mary",
+  "University of Rochester",
+  "Case Western Reserve University",
+  "Lehigh University",
+  "Rensselaer Polytechnic Institute",
+  "Worcester Polytechnic Institute",
+  "Stevens Institute of Technology",
+];
+
+function daysUntilLabel(days: number): { text: string; color: string } {
+  if (days < 0) return { text: "Past due", color: "#dc2626" };
+  if (days === 0) return { text: "Due today!", color: "#dc2626" };
+  if (days <= 7) return { text: `${days}d left`, color: "#ea580c" };
+  if (days <= 30) return { text: `${days}d left`, color: "#d97706" };
+  return { text: `${days}d left`, color: "#16a34a" };
 }
 
 export default function Home() {
-  const [view, setView] = useState<"dashboard" | "add" | "detail">("dashboard");
-  const [applications, setApplications] = useState<Application[]>([]);
-  const [schools, setSchools] = useState<School[]>([]);
-  const [schoolSearch, setSchoolSearch] = useState("");
-  const [filteredSchools, setFilteredSchools] = useState<School[]>([]);
-  const [selectedSchool, setSelectedSchool] = useState<School | null>(null);
-  const [selectedApp, setSelectedApp] = useState<Application | null>(null);
-  const [deadlineType, setDeadlineType] = useState<"EA" | "ED" | "RD">("RD");
-  const [customDate, setCustomDate] = useState("");
-  const [notes, setNotes] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [sortBy, setSortBy] = useState<"deadline" | "name">("deadline");
-  const [searchOpen, setSearchOpen] = useState(false);
-  const [loadingSchools, setLoadingSchools] = useState(false);
-  const [email, setEmail] = useState("");
-  const [authView, setAuthView] = useState<"none" | "login" | "signup">("none");
+  const [user, setUser] = useState<User | null>(null);
+  const [authMode, setAuthMode] = useState<"login" | "signup">("signup");
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
   const [authError, setAuthError] = useState("");
-  const [saving, setSaving] = useState(false);
+  const [authLoading, setAuthLoading] = useState(false);
 
-  // Track page view
+  const [deadlines, setDeadlines] = useState<DeadlineEntry[]>([]);
+  const [loadingDeadlines, setLoadingDeadlines] = useState(false);
+
+  const [showForm, setShowForm] = useState(false);
+  const [formSchool, setFormSchool] = useState("");
+  const [formType, setFormType] = useState(APPLICATION_TYPES[0]);
+  const [formDate, setFormDate] = useState("");
+  const [formNotes, setFormNotes] = useState("");
+  const [formError, setFormError] = useState("");
+  const [formLoading, setFormLoading] = useState(false);
+  const [schoolSuggestions, setSchoolSuggestions] = useState<string[]>([]);
+
+  const [editId, setEditId] = useState<number | null>(null);
+  const [deleteId, setDeleteId] = useState<number | null>(null);
+
+  const [reminderEmail, setReminderEmail] = useState("");
+  const [reminderSaving, setReminderSaving] = useState(false);
+  const [reminderSaved, setReminderSaved] = useState(false);
+  const [reminderEmailValue, setReminderEmailValue] = useState("");
+
+  const [filterStatus, setFilterStatus] = useState<"all" | "upcoming" | "past">("upcoming");
+  const [initialized, setInitialized] = useState(false);
+
+  // Track page visit
   useEffect(() => {
     fetch("/api/track", {
       method: "POST",
@@ -95,786 +127,889 @@ export default function Home() {
     }).catch(() => {});
   }, []);
 
-  // Check auth on load
+  // Check session on load
   useEffect(() => {
     fetch("/api/auth")
       .then((r) => r.json())
       .then((d) => {
-        if (d.email) setEmail(d.email);
+        if (d.email) {
+          setUser({ email: d.email });
+        }
+        setInitialized(true);
       })
-      .catch(() => {});
+      .catch(() => setInitialized(true));
   }, []);
 
-  // Load applications from localStorage
-  useEffect(() => {
+  const fetchDeadlines = useCallback(async () => {
+    setLoadingDeadlines(true);
     try {
-      const saved = localStorage.getItem("edutracker_apps");
-      if (saved) setApplications(JSON.parse(saved));
-    } catch {}
+      const res = await fetch("/api/deadlines");
+      const data = await res.json();
+      if (data.deadlines) setDeadlines(data.deadlines);
+    } catch {
+      // ignore
+    } finally {
+      setLoadingDeadlines(false);
+    }
   }, []);
 
-  // Save applications to localStorage
-  const saveApplications = useCallback((apps: Application[]) => {
-    setApplications(apps);
+  const fetchReminderEmail = useCallback(async () => {
     try {
-      localStorage.setItem("edutracker_apps", JSON.stringify(apps));
-    } catch {}
+      const res = await fetch("/api/reminder-email");
+      const data = await res.json();
+      if (data.email) {
+        setReminderEmailValue(data.email);
+        setReminderEmail(data.email);
+      }
+    } catch {
+      // ignore
+    }
   }, []);
 
-  // Load all schools on mount
   useEffect(() => {
-    setLoadingSchools(true);
-    fetch("/api/schools")
-      .then((r) => r.json())
-      .then((d) => {
-        if (d.schools) setSchools(d.schools);
-      })
-      .finally(() => setLoadingSchools(false));
-  }, []);
-
-  // Search schools
-  useEffect(() => {
-    if (!schoolSearch.trim()) {
-      setFilteredSchools(schools.slice(0, 20));
-      return;
+    if (user) {
+      fetchDeadlines();
+      fetchReminderEmail();
     }
-    const q = schoolSearch.toLowerCase();
-    setFilteredSchools(
-      schools
-        .filter(
-          (s) =>
-            s.name.toLowerCase().includes(q) ||
-            s.location.toLowerCase().includes(q) ||
-            s.state.toLowerCase().includes(q)
-        )
-        .slice(0, 30)
-    );
-  }, [schoolSearch, schools]);
+  }, [user, fetchDeadlines, fetchReminderEmail]);
 
-  function getDeadlineDate(school: School, type: "EA" | "ED" | "RD"): string {
-    const year = new Date().getFullYear();
-    const fallYear = new Date().getMonth() >= 6 ? year : year - 1;
-    const appYear = fallYear + 1;
-
-    let mmdd: string | undefined;
-    if (type === "EA") mmdd = school.earlyActionDeadline;
-    else if (type === "ED") mmdd = school.earlyDecisionDeadline;
-    else mmdd = school.regularDecisionDeadline;
-
-    if (!mmdd) return "";
-    const [mm, dd] = mmdd.split("-");
-    // If month is Jan-Mar, it's in the spring of the application year
-    const yr = parseInt(mm) <= 3 ? appYear : fallYear;
-    return `${yr}-${mm}-${dd}`;
-  }
-
-  function handleSelectSchool(school: School) {
-    setSelectedSchool(school);
-    setSearchOpen(false);
-    setSchoolSearch("");
-
-    // Auto-set deadline type and date
-    const hasEA = !!school.earlyActionDeadline;
-    const hasED = !!school.earlyDecisionDeadline;
-    const hasRD = !!school.regularDecisionDeadline;
-
-    const type = hasRD ? "RD" : hasEA ? "EA" : hasED ? "ED" : "RD";
-    setDeadlineType(type as "EA" | "ED" | "RD");
-    setCustomDate(getDeadlineDate(school, type as "EA" | "ED" | "RD"));
-  }
-
-  function handleDeadlineTypeChange(type: "EA" | "ED" | "RD") {
-    setDeadlineType(type);
-    if (selectedSchool) {
-      setCustomDate(getDeadlineDate(selectedSchool, type));
-    }
-  }
-
-  function handleAddApplication() {
-    if (!selectedSchool || !customDate) return;
-    setSaving(true);
-    const app: Application = {
-      id: Date.now().toString(),
-      schoolId: selectedSchool.id,
-      schoolName: selectedSchool.name,
-      schoolLocation: selectedSchool.location,
-      deadlineType,
-      deadlineDate: customDate,
-      status: "planning",
-      notes,
-    };
-    saveApplications([...applications, app]);
-    setSaving(false);
-    setView("dashboard");
-    setSelectedSchool(null);
-    setSchoolSearch("");
-    setNotes("");
-    setDeadlineType("RD");
-    setCustomDate("");
-  }
-
-  function handleUpdateStatus(id: string, status: Application["status"]) {
-    saveApplications(
-      applications.map((a) => (a.id === id ? { ...a, status } : a))
-    );
-    if (selectedApp?.id === id) {
-      setSelectedApp((prev) => (prev ? { ...prev, status } : prev));
-    }
-  }
-
-  function handleUpdateNotes(id: string, notes: string) {
-    saveApplications(
-      applications.map((a) => (a.id === id ? { ...a, notes } : a))
-    );
-    if (selectedApp?.id === id) {
-      setSelectedApp((prev) => (prev ? { ...prev, notes } : prev));
-    }
-  }
-
-  function handleDelete(id: string) {
-    saveApplications(applications.filter((a) => a.id !== id));
-    setView("dashboard");
-    setSelectedApp(null);
-  }
-
-  async function handleAuth(mode: "login" | "signup") {
+  const handleAuth = async (e: React.FormEvent) => {
+    e.preventDefault();
     setAuthError("");
-    const res = await fetch("/api/auth", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mode, email: authEmail, password: authPassword }),
-    });
-    const d = await res.json();
-    if (d.error) {
-      setAuthError(d.error);
-    } else if (d.email) {
-      setEmail(d.email);
-      setAuthView("none");
-      setAuthEmail("");
-      setAuthPassword("");
+    setAuthLoading(true);
+    try {
+      const res = await fetch("/api/auth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: authMode, email: authEmail, password: authPassword }),
+      });
+      const data = await res.json();
+      if (data.error) {
+        setAuthError(data.error);
+      } else if (data.ok) {
+        setUser({ email: data.email });
+      }
+    } catch {
+      setAuthError("Something went wrong. Try again.");
+    } finally {
+      setAuthLoading(false);
     }
-  }
+  };
 
-  async function handleLogout() {
+  const handleLogout = async () => {
     await fetch("/api/auth", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ mode: "logout" }),
     });
-    setEmail("");
+    setUser(null);
+    setDeadlines([]);
+    setReminderEmailValue("");
+    setReminderEmail("");
+  };
+
+  const handleSchoolInput = (val: string) => {
+    setFormSchool(val);
+    if (val.length < 2) {
+      setSchoolSuggestions([]);
+      return;
+    }
+    const lower = val.toLowerCase();
+    const matches = POPULAR_SCHOOLS.filter((s) => s.toLowerCase().includes(lower)).slice(0, 6);
+    setSchoolSuggestions(matches);
+  };
+
+  const openAddForm = () => {
+    setEditId(null);
+    setFormSchool("");
+    setFormType(APPLICATION_TYPES[0]);
+    setFormDate("");
+    setFormNotes("");
+    setFormError("");
+    setSchoolSuggestions([]);
+    setShowForm(true);
+  };
+
+  const openEditForm = (d: DeadlineEntry) => {
+    setEditId(d.id);
+    setFormSchool(d.school_name);
+    setFormType(d.application_type);
+    setFormDate(d.deadline_date.slice(0, 10));
+    setFormNotes(d.notes || "");
+    setFormError("");
+    setSchoolSuggestions([]);
+    setShowForm(true);
+  };
+
+  const handleFormSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formSchool.trim()) { setFormError("School name is required."); return; }
+    if (!formDate) { setFormError("Deadline date is required."); return; }
+    setFormError("");
+    setFormLoading(true);
+    try {
+      const body = {
+        id: editId,
+        school_name: formSchool.trim(),
+        application_type: formType,
+        deadline_date: formDate,
+        notes: formNotes.trim(),
+      };
+      const res = await fetch("/api/deadlines", {
+        method: editId ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (data.error) { setFormError(data.error); return; }
+      setShowForm(false);
+      fetchDeadlines();
+    } catch {
+      setFormError("Failed to save. Try again.");
+    } finally {
+      setFormLoading(false);
+    }
+  };
+
+  const handleDelete = async (id: number) => {
+    try {
+      await fetch("/api/deadlines", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id }),
+      });
+      setDeleteId(null);
+      fetchDeadlines();
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleSaveReminderEmail = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setReminderSaving(true);
+    setReminderSaved(false);
+    try {
+      const res = await fetch("/api/reminder-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: reminderEmail }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setReminderEmailValue(reminderEmail);
+        setReminderSaved(true);
+        setTimeout(() => setReminderSaved(false), 3000);
+      }
+    } catch {
+      // ignore
+    } finally {
+      setReminderSaving(false);
+    }
+  };
+
+  const filteredDeadlines = deadlines.filter((d) => {
+    if (filterStatus === "upcoming") return d.days_until >= 0;
+    if (filterStatus === "past") return d.days_until < 0;
+    return true;
+  });
+
+  const sortedDeadlines = [...filteredDeadlines].sort((a, b) => {
+    return new Date(a.deadline_date).getTime() - new Date(b.deadline_date).getTime();
+  });
+
+  const upcomingCount = deadlines.filter((d) => d.days_until >= 0 && d.days_until <= 7).length;
+
+  if (!initialized) {
+    return (
+      <div style={styles.loadingScreen}>
+        <img src="https://kobwhnsy46wia1ga.public.blob.vercel-storage.com/olympus/MHzFM0XwMRAKcI38/ms9ar2f7-ee744c62-792d-4a40-9a12-3f39cebb7464-removebg-preview-3C58eOMxvVC76P595ELS8vavDN1zzQ.png" alt="Edutracker" style={{ width: 80, height: 80, objectFit: "contain" }} />
+        <p style={{ color: "#1e40af", marginTop: 16, fontWeight: 600 }}>Loading…</p>
+      </div>
+    );
   }
 
-  const sorted = [...applications]
-    .filter((a) => statusFilter === "all" || a.status === statusFilter)
-    .sort((a, b) => {
-      if (sortBy === "deadline") {
-        return new Date(a.deadlineDate).getTime() - new Date(b.deadlineDate).getTime();
-      }
-      return a.schoolName.localeCompare(b.schoolName);
-    });
+  if (!user) {
+    return (
+      <div style={styles.authPage}>
+        <div style={styles.authCard}>
+          <div style={styles.logoArea}>
+            <img
+              src="https://kobwhnsy46wia1ga.public.blob.vercel-storage.com/olympus/MHzFM0XwMRAKcI38/ms9ar2f7-ee744c62-792d-4a40-9a12-3f39cebb7464-removebg-preview-3C58eOMxvVC76P595ELS8vavDN1zzQ.png"
+              alt="Edutracker logo"
+              style={{ width: 70, height: 70, objectFit: "contain" }}
+            />
+            <h1 style={styles.brandTitle}>Edutracker</h1>
+            <p style={styles.brandSub}>Never miss a college application deadline.</p>
+          </div>
 
-  const upcoming = applications
-    .filter((a) => {
-      const d = daysUntil(a.deadlineDate);
-      return d >= 0 && d <= 7 && a.status !== "submitted" && a.status !== "accepted";
-    })
-    .sort((a, b) => daysUntil(a.deadlineDate) - daysUntil(b.deadlineDate));
+          <div style={styles.tabRow}>
+            <button
+              style={{ ...styles.tab, ...(authMode === "signup" ? styles.tabActive : {}) }}
+              onClick={() => { setAuthMode("signup"); setAuthError(""); }}
+            >
+              Sign Up
+            </button>
+            <button
+              style={{ ...styles.tab, ...(authMode === "login" ? styles.tabActive : {}) }}
+              onClick={() => { setAuthMode("login"); setAuthError(""); }}
+            >
+              Log In
+            </button>
+          </div>
 
-  // ===================== RENDER =====================
+          <form onSubmit={handleAuth} style={styles.form}>
+            <label style={styles.label}>Email</label>
+            <input
+              style={styles.input}
+              type="email"
+              placeholder="you@example.com"
+              value={authEmail}
+              onChange={(e) => setAuthEmail(e.target.value)}
+              required
+            />
+            <label style={styles.label}>Password</label>
+            <input
+              style={styles.input}
+              type="password"
+              placeholder="••••••••"
+              value={authPassword}
+              onChange={(e) => setAuthPassword(e.target.value)}
+              required
+            />
+            {authError && <p style={styles.errorMsg}>{authError}</p>}
+            <button style={styles.primaryBtn} type="submit" disabled={authLoading}>
+              {authLoading ? "Please wait…" : authMode === "signup" ? "Create Account" : "Log In"}
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div style={{ minHeight: "100vh", background: "#f0f6ff", fontFamily: "'Inter', 'Segoe UI', sans-serif" }}>
+    <div style={styles.appShell}>
       {/* Header */}
-      <header style={{
-        background: "#1a56db",
-        color: "#fff",
-        padding: "0 24px",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        height: 64,
-        boxShadow: "0 2px 12px rgba(26,86,219,0.3)",
-        position: "sticky",
-        top: 0,
-        zIndex: 100,
-      }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+      <header style={styles.header}>
+        <div style={styles.headerLeft}>
           <img
             src="https://kobwhnsy46wia1ga.public.blob.vercel-storage.com/olympus/MHzFM0XwMRAKcI38/ms9ar2f7-ee744c62-792d-4a40-9a12-3f39cebb7464-removebg-preview-3C58eOMxvVC76P595ELS8vavDN1zzQ.png"
-            alt="Edutracker Logo"
-            style={{ height: 40, width: "auto", objectFit: "contain" }}
+            alt="Edutracker"
+            style={{ width: 38, height: 38, objectFit: "contain" }}
           />
-          <span style={{ fontWeight: 700, fontSize: 20, letterSpacing: "-0.3px" }}>Edutracker</span>
+          <span style={styles.headerBrand}>Edutracker</span>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          {email ? (
-            <>
-              <span style={{ fontSize: 13, opacity: 0.85 }}>{email}</span>
-              <button onClick={handleLogout} style={{
-                background: "rgba(255,255,255,0.15)",
-                border: "1px solid rgba(255,255,255,0.3)",
-                color: "#fff",
-                borderRadius: 8,
-                padding: "6px 14px",
-                fontSize: 13,
-                cursor: "pointer",
-              }}>Sign Out</button>
-            </>
-          ) : (
-            <>
-              <button onClick={() => setAuthView("login")} style={{
-                background: "rgba(255,255,255,0.15)",
-                border: "1px solid rgba(255,255,255,0.3)",
-                color: "#fff",
-                borderRadius: 8,
-                padding: "6px 14px",
-                fontSize: 13,
-                cursor: "pointer",
-              }}>Sign In</button>
-              <button onClick={() => setAuthView("signup")} style={{
-                background: "#fff",
-                border: "none",
-                color: "#1a56db",
-                borderRadius: 8,
-                padding: "6px 14px",
-                fontSize: 13,
-                fontWeight: 600,
-                cursor: "pointer",
-              }}>Sign Up</button>
-            </>
+        <div style={styles.headerRight}>
+          {upcomingCount > 0 && (
+            <span style={styles.urgentBadge}>🔔 {upcomingCount} due soon</span>
           )}
+          <span style={styles.userEmail}>{user.email}</span>
+          <button style={styles.logoutBtn} onClick={handleLogout}>Log out</button>
         </div>
       </header>
 
-      {/* Auth Modal */}
-      {authView !== "none" && (
-        <div style={{
-          position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)",
-          zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center",
-        }}>
-          <div style={{
-            background: "#fff", borderRadius: 16, padding: 32, width: 360,
-            boxShadow: "0 20px 60px rgba(0,0,0,0.2)",
-          }}>
-            <h2 style={{ margin: "0 0 20px", fontSize: 20, color: "#1e293b" }}>
-              {authView === "login" ? "Sign In" : "Create Account"}
-            </h2>
+      <main style={styles.main}>
+        {/* Reminder email section */}
+        <section style={styles.reminderSection}>
+          <h2 style={styles.sectionTitle}>📧 7-Day Email Reminders</h2>
+          <p style={styles.sectionDesc}>
+            We&apos;ll email you 7 days before each deadline. Make sure your reminder email is set:
+          </p>
+          <form onSubmit={handleSaveReminderEmail} style={styles.reminderForm}>
             <input
+              style={{ ...styles.input, flex: 1, marginBottom: 0 }}
               type="email"
-              placeholder="Email"
-              value={authEmail}
-              onChange={(e) => setAuthEmail(e.target.value)}
-              style={inputStyle}
+              placeholder="reminder@youremail.com"
+              value={reminderEmail}
+              onChange={(e) => setReminderEmail(e.target.value)}
+              required
             />
-            <input
-              type="password"
-              placeholder="Password"
-              value={authPassword}
-              onChange={(e) => setAuthPassword(e.target.value)}
-              style={{ ...inputStyle, marginTop: 10 }}
-              onKeyDown={(e) => e.key === "Enter" && handleAuth(authView as "login" | "signup")}
-            />
-            {authError && <p style={{ color: "#ef4444", fontSize: 13, margin: "8px 0 0" }}>{authError}</p>}
-            <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
-              <button
-                onClick={() => handleAuth(authView as "login" | "signup")}
-                style={{ ...btnPrimaryStyle, flex: 1 }}
-              >
-                {authView === "login" ? "Sign In" : "Sign Up"}
-              </button>
-              <button
-                onClick={() => { setAuthView("none"); setAuthError(""); }}
-                style={{ ...btnSecondaryStyle, flex: 1 }}
-              >
-                Cancel
-              </button>
-            </div>
-            <p style={{ fontSize: 13, color: "#64748b", marginTop: 14, textAlign: "center" }}>
-              {authView === "login" ? (
-                <>No account? <span style={{ color: "#1a56db", cursor: "pointer" }} onClick={() => setAuthView("signup")}>Sign up</span></>
-              ) : (
-                <>Have an account? <span style={{ color: "#1a56db", cursor: "pointer" }} onClick={() => setAuthView("login")}>Sign in</span></>
-              )}
-            </p>
-          </div>
-        </div>
-      )}
-
-      <main style={{ maxWidth: 860, margin: "0 auto", padding: "28px 20px" }}>
-
-        {/* DASHBOARD VIEW */}
-        {view === "dashboard" && (
-          <>
-            {/* Urgent Alerts */}
-            {upcoming.length > 0 && (
-              <div style={{
-                background: "#fff7ed",
-                border: "1px solid #fed7aa",
-                borderRadius: 12,
-                padding: "14px 18px",
-                marginBottom: 20,
-              }}>
-                <div style={{ fontWeight: 600, color: "#c2410c", marginBottom: 8, fontSize: 14 }}>
-                  ⚠️ Deadlines in the next 7 days
-                </div>
-                {upcoming.map((a) => (
-                  <div key={a.id} style={{
-                    display: "flex", alignItems: "center", justifyContent: "space-between",
-                    padding: "6px 0", borderTop: "1px solid #fed7aa",
-                  }}>
-                    <span style={{ fontSize: 14, color: "#1e293b" }}>{a.schoolName}</span>
-                    <span style={{ fontSize: 13, fontWeight: 600, color: "#ef4444" }}>
-                      {daysUntil(a.deadlineDate) === 0 ? "TODAY" : `${daysUntil(a.deadlineDate)}d left`}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* Stats */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 24 }}>
-              {(["planning", "in-progress", "submitted", "accepted"] as const).map((s) => (
-                <div key={s} style={{
-                  background: "#fff",
-                  borderRadius: 12,
-                  padding: "16px",
-                  textAlign: "center",
-                  boxShadow: "0 1px 4px rgba(0,0,0,0.06)",
-                  cursor: "pointer",
-                  border: statusFilter === s ? `2px solid ${STATUS_COLORS[s]}` : "2px solid transparent",
-                }}
-                  onClick={() => setStatusFilter(statusFilter === s ? "all" : s)}
-                >
-                  <div style={{ fontSize: 26, fontWeight: 700, color: STATUS_COLORS[s] }}>
-                    {applications.filter((a) => a.status === s).length}
-                  </div>
-                  <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>{STATUS_LABELS[s]}</div>
-                </div>
-              ))}
-            </div>
-
-            {/* Controls */}
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, gap: 10, flexWrap: "wrap" }}>
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <select
-                  value={statusFilter}
-                  onChange={(e) => setStatusFilter(e.target.value)}
-                  style={{ ...selectStyle }}
-                >
-                  <option value="all">All Statuses</option>
-                  {Object.entries(STATUS_LABELS).map(([v, l]) => (
-                    <option key={v} value={v}>{l}</option>
-                  ))}
-                </select>
-                <select
-                  value={sortBy}
-                  onChange={(e) => setSortBy(e.target.value as "deadline" | "name")}
-                  style={{ ...selectStyle }}
-                >
-                  <option value="deadline">Sort by Deadline</option>
-                  <option value="name">Sort by Name</option>
-                </select>
-              </div>
-              <button onClick={() => setView("add")} style={btnPrimaryStyle}>
-                + Add College
-              </button>
-            </div>
-
-            {/* Applications List */}
-            {sorted.length === 0 ? (
-              <div style={{
-                background: "#fff",
-                borderRadius: 16,
-                padding: "60px 24px",
-                textAlign: "center",
-                boxShadow: "0 1px 4px rgba(0,0,0,0.06)",
-              }}>
-                <div style={{ fontSize: 48, marginBottom: 12 }}>🎓</div>
-                <h2 style={{ color: "#1e293b", margin: "0 0 8px" }}>No applications yet</h2>
-                <p style={{ color: "#64748b", margin: "0 0 20px" }}>
-                  Start tracking your college applications and never miss a deadline.
-                </p>
-                <button onClick={() => setView("add")} style={btnPrimaryStyle}>
-                  Add Your First College
-                </button>
-              </div>
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                {sorted.map((app) => {
-                  const days = daysUntil(app.deadlineDate);
-                  return (
-                    <div
-                      key={app.id}
-                      onClick={() => { setSelectedApp(app); setView("detail"); }}
-                      style={{
-                        background: "#fff",
-                        borderRadius: 12,
-                        padding: "16px 20px",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        cursor: "pointer",
-                        boxShadow: "0 1px 4px rgba(0,0,0,0.06)",
-                        border: "1px solid #e2e8f0",
-                        transition: "box-shadow 0.15s",
-                        gap: 12,
-                      }}
-                    >
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontWeight: 600, color: "#1e293b", fontSize: 15, marginBottom: 2 }}>
-                          {app.schoolName}
-                        </div>
-                        <div style={{ fontSize: 12, color: "#94a3b8" }}>
-                          {app.schoolLocation} &middot; {app.deadlineType === "EA" ? "Early Action" : app.deadlineType === "ED" ? "Early Decision" : "Regular Decision"}
-                        </div>
-                      </div>
-                      <div style={{ textAlign: "right", flexShrink: 0 }}>
-                        <div style={{ fontSize: 13, color: "#64748b" }}>{formatDate(app.deadlineDate)}</div>
-                        <div style={{ fontSize: 12, fontWeight: 600, color: days < 0 ? "#6b7280" : urgencyColor(days), marginTop: 2 }}>
-                          {days < 0 ? "Past deadline" : days === 0 ? "Today!" : `${days} days`}
-                        </div>
-                      </div>
-                      <div style={{
-                        background: STATUS_COLORS[app.status] + "22",
-                        color: STATUS_COLORS[app.status],
-                        borderRadius: 20,
-                        padding: "3px 10px",
-                        fontSize: 12,
-                        fontWeight: 600,
-                        flexShrink: 0,
-                      }}>
-                        {STATUS_LABELS[app.status]}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </>
-        )}
-
-        {/* ADD VIEW */}
-        {view === "add" && (
-          <div style={{ maxWidth: 560, margin: "0 auto" }}>
-            <button onClick={() => { setView("dashboard"); setSelectedSchool(null); setSchoolSearch(""); }} style={backBtnStyle}>
-              ← Back
+            <button style={styles.primaryBtn} type="submit" disabled={reminderSaving}>
+              {reminderSaving ? "Saving…" : reminderEmailValue ? "Update" : "Save"}
             </button>
-            <h1 style={{ color: "#1e293b", margin: "16px 0 24px", fontSize: 22 }}>Add a College</h1>
+          </form>
+          {reminderSaved && <p style={styles.successMsg}>✅ Reminder email saved!</p>}
+          {reminderEmailValue && !reminderSaved && (
+            <p style={styles.currentReminder}>Current: <strong>{reminderEmailValue}</strong></p>
+          )}
+        </section>
 
-            <div style={cardStyle}>
-              {/* School Search */}
-              <div style={{ marginBottom: 20 }}>
-                <label style={labelStyle}>College / University</label>
-                {selectedSchool ? (
-                  <div style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    padding: "12px 16px",
-                    background: "#eff6ff",
-                    borderRadius: 10,
-                    border: "1px solid #bfdbfe",
-                  }}>
-                    <div>
-                      <div style={{ fontWeight: 600, color: "#1e293b" }}>{selectedSchool.name}</div>
-                      <div style={{ fontSize: 12, color: "#64748b" }}>{selectedSchool.location}</div>
-                    </div>
-                    <button
-                      onClick={() => { setSelectedSchool(null); setCustomDate(""); }}
-                      style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: 18 }}
-                    >×</button>
-                  </div>
-                ) : (
-                  <div style={{ position: "relative" }}>
-                    <input
-                      type="text"
-                      placeholder="Search 150+ colleges..."
-                      value={schoolSearch}
-                      onChange={(e) => { setSchoolSearch(e.target.value); setSearchOpen(true); }}
-                      onFocus={() => setSearchOpen(true)}
-                      style={inputStyle}
-                      autoComplete="off"
-                    />
-                    {searchOpen && (
-                      <div style={{
-                        position: "absolute", top: "100%", left: 0, right: 0,
-                        background: "#fff", borderRadius: "0 0 10px 10px",
-                        border: "1px solid #e2e8f0", borderTop: "none",
-                        maxHeight: 280, overflowY: "auto",
-                        zIndex: 50, boxShadow: "0 8px 24px rgba(0,0,0,0.1)",
-                      }}>
-                        {loadingSchools ? (
-                          <div style={{ padding: 16, textAlign: "center", color: "#94a3b8" }}>Loading...</div>
-                        ) : filteredSchools.length === 0 ? (
-                          <div style={{ padding: 16, textAlign: "center", color: "#94a3b8" }}>No schools found</div>
-                        ) : (
-                          filteredSchools.map((s) => (
-                            <div
-                              key={s.id}
-                              onClick={() => handleSelectSchool(s)}
-                              style={{
-                                padding: "10px 16px",
-                                cursor: "pointer",
-                                borderBottom: "1px solid #f1f5f9",
-                                transition: "background 0.1s",
-                              }}
-                              onMouseEnter={(e) => (e.currentTarget.style.background = "#f0f6ff")}
-                              onMouseLeave={(e) => (e.currentTarget.style.background = "#fff")}
-                            >
-                              <div style={{ fontWeight: 500, color: "#1e293b", fontSize: 14 }}>{s.name}</div>
-                              <div style={{ fontSize: 12, color: "#94a3b8" }}>
-                                {s.location} &middot; {s.type === "public" ? "Public" : "Private"}
-                                {s.acceptanceRate !== undefined ? ` · ${s.acceptanceRate}% acceptance` : ""}
-                              </div>
-                            </div>
-                          ))
-                        )}
+        {/* Deadlines section */}
+        <section style={styles.deadlineSection}>
+          <div style={styles.deadlineHeader}>
+            <h2 style={styles.sectionTitle}>📅 My Application Deadlines</h2>
+            <button style={styles.addBtn} onClick={openAddForm}>+ Add School</button>
+          </div>
+
+          {/* Filter tabs */}
+          <div style={styles.filterRow}>
+            {(["upcoming", "all", "past"] as const).map((f) => (
+              <button
+                key={f}
+                style={{ ...styles.filterBtn, ...(filterStatus === f ? styles.filterBtnActive : {}) }}
+                onClick={() => setFilterStatus(f)}
+              >
+                {f === "upcoming" ? "Upcoming" : f === "all" ? "All" : "Past"}
+              </button>
+            ))}
+          </div>
+
+          {loadingDeadlines ? (
+            <p style={{ color: "#64748b", textAlign: "center", padding: "40px 0" }}>Loading deadlines…</p>
+          ) : sortedDeadlines.length === 0 ? (
+            <div style={styles.emptyState}>
+              <div style={{ fontSize: 48, marginBottom: 12 }}>🎓</div>
+              <p style={{ color: "#475569", fontWeight: 600, fontSize: 18 }}>No deadlines yet</p>
+              <p style={{ color: "#94a3b8", marginTop: 6 }}>
+                {filterStatus === "past"
+                  ? "No past deadlines found."
+                  : "Add your first school to get started!"}
+              </p>
+              {filterStatus !== "past" && (
+                <button style={{ ...styles.primaryBtn, marginTop: 20 }} onClick={openAddForm}>
+                  + Add Your First School
+                </button>
+              )}
+            </div>
+          ) : (
+            <div style={styles.cardGrid}>
+              {sortedDeadlines.map((d) => {
+                const { text, color } = daysUntilLabel(d.days_until);
+                const isPast = d.days_until < 0;
+                return (
+                  <div key={d.id} style={{ ...styles.deadlineCard, opacity: isPast ? 0.7 : 1 }}>
+                    <div style={styles.cardTop}>
+                      <div>
+                        <div style={styles.schoolName}>{d.school_name}</div>
+                        <div style={styles.appType}>{d.application_type}</div>
                       </div>
+                      <div style={{ ...styles.daysChip, color, borderColor: color }}>
+                        {text}
+                      </div>
+                    </div>
+                    <div style={styles.deadlineDateRow}>
+                      <span style={styles.deadlineDateLabel}>Deadline:</span>
+                      <span style={styles.deadlineDateVal}>
+                        {new Date(d.deadline_date + "T12:00:00").toLocaleDateString("en-US", {
+                          weekday: "short",
+                          month: "long",
+                          day: "numeric",
+                          year: "numeric",
+                        })}
+                      </span>
+                    </div>
+                    {d.notes && <div style={styles.notes}>{d.notes}</div>}
+                    {d.email_reminder_sent && (
+                      <div style={styles.reminderSentTag}>✅ Reminder sent</div>
                     )}
+                    <div style={styles.cardActions}>
+                      <button style={styles.editBtn} onClick={() => openEditForm(d)}>Edit</button>
+                      <button style={styles.deleteBtn} onClick={() => setDeleteId(d.id)}>Delete</button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
+      </main>
+
+      {/* Add/Edit Modal */}
+      {showForm && (
+        <div style={styles.modalOverlay} onClick={() => setShowForm(false)}>
+          <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
+            <h2 style={styles.modalTitle}>{editId ? "Edit Deadline" : "Add School Deadline"}</h2>
+            <form onSubmit={handleFormSubmit} style={styles.form}>
+              <label style={styles.label}>School Name</label>
+              <div style={{ position: "relative" }}>
+                <input
+                  style={styles.input}
+                  type="text"
+                  placeholder="e.g. Harvard University"
+                  value={formSchool}
+                  onChange={(e) => handleSchoolInput(e.target.value)}
+                  autoComplete="off"
+                />
+                {schoolSuggestions.length > 0 && (
+                  <div style={styles.suggestions}>
+                    {schoolSuggestions.map((s) => (
+                      <div
+                        key={s}
+                        style={styles.suggestion}
+                        onMouseDown={() => { setFormSchool(s); setSchoolSuggestions([]); }}
+                      >
+                        {s}
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
 
-              {/* Deadline Type */}
-              {selectedSchool && (
-                <div style={{ marginBottom: 20 }}>
-                  <label style={labelStyle}>Application Round</label>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    {(["EA", "ED", "RD"] as const).map((type) => {
-                      const available = type === "EA"
-                        ? !!selectedSchool.earlyActionDeadline
-                        : type === "ED"
-                          ? !!selectedSchool.earlyDecisionDeadline
-                          : !!selectedSchool.regularDecisionDeadline;
-                      const labels = { EA: "Early Action", ED: "Early Decision", RD: "Regular Decision" };
-                      return (
-                        <button
-                          key={type}
-                          onClick={() => available && handleDeadlineTypeChange(type)}
-                          style={{
-                            flex: 1,
-                            padding: "10px 6px",
-                            borderRadius: 8,
-                            border: deadlineType === type ? "2px solid #1a56db" : "2px solid #e2e8f0",
-                            background: deadlineType === type ? "#eff6ff" : "#fff",
-                            color: !available ? "#cbd5e1" : deadlineType === type ? "#1a56db" : "#475569",
-                            fontSize: 12,
-                            fontWeight: 600,
-                            cursor: available ? "pointer" : "not-allowed",
-                          }}
-                        >
-                          {type}<br />
-                          <span style={{ fontWeight: 400, fontSize: 11 }}>{labels[type]}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* Date */}
-              <div style={{ marginBottom: 20 }}>
-                <label style={labelStyle}>Deadline Date</label>
-                <input
-                  type="date"
-                  value={customDate}
-                  onChange={(e) => setCustomDate(e.target.value)}
-                  style={inputStyle}
-                />
-              </div>
-
-              {/* Notes */}
-              <div style={{ marginBottom: 24 }}>
-                <label style={labelStyle}>Notes (optional)</label>
-                <textarea
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  placeholder="Add any notes about this application..."
-                  rows={3}
-                  style={{ ...inputStyle, resize: "vertical" }}
-                />
-              </div>
-
-              <button
-                onClick={handleAddApplication}
-                disabled={!selectedSchool || !customDate || saving}
-                style={{
-                  ...btnPrimaryStyle,
-                  width: "100%",
-                  opacity: !selectedSchool || !customDate ? 0.5 : 1,
-                }}
+              <label style={styles.label}>Application Type</label>
+              <select
+                style={styles.input}
+                value={formType}
+                onChange={(e) => setFormType(e.target.value)}
               >
-                {saving ? "Adding..." : "Add to My List"}
+                {APPLICATION_TYPES.map((t) => (
+                  <option key={t} value={t}>{t}</option>
+                ))}
+              </select>
+
+              <label style={styles.label}>Deadline Date</label>
+              <input
+                style={styles.input}
+                type="date"
+                value={formDate}
+                onChange={(e) => setFormDate(e.target.value)}
+                required
+              />
+
+              <label style={styles.label}>Notes (optional)</label>
+              <textarea
+                style={{ ...styles.input, height: 80, resize: "vertical" }}
+                placeholder="Any extra info…"
+                value={formNotes}
+                onChange={(e) => setFormNotes(e.target.value)}
+              />
+
+              {formError && <p style={styles.errorMsg}>{formError}</p>}
+
+              <div style={styles.modalActions}>
+                <button type="button" style={styles.cancelBtn} onClick={() => setShowForm(false)}>
+                  Cancel
+                </button>
+                <button type="submit" style={styles.primaryBtn} disabled={formLoading}>
+                  {formLoading ? "Saving…" : editId ? "Save Changes" : "Add Deadline"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete confirm */}
+      {deleteId !== null && (
+        <div style={styles.modalOverlay} onClick={() => setDeleteId(null)}>
+          <div style={{ ...styles.modal, maxWidth: 380 }} onClick={(e) => e.stopPropagation()}>
+            <h2 style={styles.modalTitle}>Delete Deadline?</h2>
+            <p style={{ color: "#475569", marginBottom: 24 }}>
+              This will permanently remove this deadline. Are you sure?
+            </p>
+            <div style={styles.modalActions}>
+              <button style={styles.cancelBtn} onClick={() => setDeleteId(null)}>Cancel</button>
+              <button style={{ ...styles.primaryBtn, background: "#dc2626" }} onClick={() => handleDelete(deleteId!)}>
+                Yes, Delete
               </button>
             </div>
           </div>
-        )}
-
-        {/* DETAIL VIEW */}
-        {view === "detail" && selectedApp && (
-          <div style={{ maxWidth: 560, margin: "0 auto" }}>
-            <button onClick={() => { setView("dashboard"); setSelectedApp(null); }} style={backBtnStyle}>
-              ← Back
-            </button>
-            <div style={{ ...cardStyle, marginTop: 16 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
-                <div>
-                  <h1 style={{ margin: "0 0 4px", fontSize: 20, color: "#1e293b" }}>{selectedApp.schoolName}</h1>
-                  <div style={{ fontSize: 13, color: "#94a3b8" }}>{selectedApp.schoolLocation}</div>
-                </div>
-                <button onClick={() => handleDelete(selectedApp.id)} style={{
-                  background: "none", border: "none", color: "#ef4444",
-                  cursor: "pointer", fontSize: 13, fontWeight: 500,
-                }}>
-                  Delete
-                </button>
-              </div>
-
-              {/* Deadline Info */}
-              <div style={{
-                background: "#f8fafc",
-                borderRadius: 10,
-                padding: "14px 16px",
-                marginBottom: 20,
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-              }}>
-                <div>
-                  <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 4 }}>
-                    {selectedApp.deadlineType === "EA" ? "Early Action" : selectedApp.deadlineType === "ED" ? "Early Decision" : "Regular Decision"}
-                  </div>
-                  <div style={{ fontWeight: 600, color: "#1e293b" }}>{formatDate(selectedApp.deadlineDate)}</div>
-                </div>
-                <div style={{
-                  fontSize: 20,
-                  fontWeight: 700,
-                  color: urgencyColor(daysUntil(selectedApp.deadlineDate)),
-                }}>
-                  {daysUntil(selectedApp.deadlineDate) < 0
-                    ? "Past"
-                    : daysUntil(selectedApp.deadlineDate) === 0
-                      ? "Today!"
-                      : `${daysUntil(selectedApp.deadlineDate)} days`}
-                </div>
-              </div>
-
-              {/* Status */}
-              <div style={{ marginBottom: 20 }}>
-                <label style={labelStyle}>Status</label>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                  {Object.entries(STATUS_LABELS).map(([val, label]) => (
-                    <button
-                      key={val}
-                      onClick={() => handleUpdateStatus(selectedApp.id, val as Application["status"])}
-                      style={{
-                        padding: "7px 14px",
-                        borderRadius: 20,
-                        border: selectedApp.status === val
-                          ? `2px solid ${STATUS_COLORS[val as Application["status"]]}`
-                          : "2px solid #e2e8f0",
-                        background: selectedApp.status === val
-                          ? STATUS_COLORS[val as Application["status"]] + "22"
-                          : "#fff",
-                        color: selectedApp.status === val
-                          ? STATUS_COLORS[val as Application["status"]]
-                          : "#64748b",
-                        fontSize: 13,
-                        fontWeight: selectedApp.status === val ? 600 : 400,
-                        cursor: "pointer",
-                      }}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Notes */}
-              <div>
-                <label style={labelStyle}>Notes</label>
-                <textarea
-                  value={selectedApp.notes}
-                  onChange={(e) => handleUpdateNotes(selectedApp.id, e.target.value)}
-                  placeholder="Add notes about essays, requirements, interviews..."
-                  rows={4}
-                  style={{ ...inputStyle, resize: "vertical" }}
-                />
-              </div>
-            </div>
-          </div>
-        )}
-      </main>
+        </div>
+      )}
     </div>
   );
 }
 
-// Shared styles
-const inputStyle: React.CSSProperties = {
-  width: "100%",
-  padding: "10px 14px",
-  borderRadius: 8,
-  border: "1px solid #e2e8f0",
-  fontSize: 14,
-  color: "#1e293b",
-  background: "#fff",
-  outline: "none",
-  boxSizing: "border-box",
-};
-
-const btnPrimaryStyle: React.CSSProperties = {
-  background: "#1a56db",
-  color: "#fff",
-  border: "none",
-  borderRadius: 8,
-  padding: "10px 20px",
-  fontSize: 14,
-  fontWeight: 600,
-  cursor: "pointer",
-};
-
-const btnSecondaryStyle: React.CSSProperties = {
-  background: "#f1f5f9",
-  color: "#475569",
-  border: "1px solid #e2e8f0",
-  borderRadius: 8,
-  padding: "10px 20px",
-  fontSize: 14,
-  fontWeight: 500,
-  cursor: "pointer",
-};
-
-const backBtnStyle: React.CSSProperties = {
-  background: "none",
-  border: "none",
-  color: "#1a56db",
-  fontSize: 14,
-  cursor: "pointer",
-  padding: 0,
-  fontWeight: 500,
-};
-
-const cardStyle: React.CSSProperties = {
-  background: "#fff",
-  borderRadius: 16,
-  padding: 24,
-  boxShadow: "0 1px 6px rgba(0,0,0,0.07)",
-};
-
-const labelStyle: React.CSSProperties = {
-  display: "block",
-  fontSize: 13,
-  fontWeight: 600,
-  color: "#374151",
-  marginBottom: 8,
-};
-
-const selectStyle: React.CSSProperties = {
-  padding: "8px 12px",
-  borderRadius: 8,
-  border: "1px solid #e2e8f0",
-  fontSize: 13,
-  color: "#1e293b",
-  background: "#fff",
-  cursor: "pointer",
+const styles: Record<string, React.CSSProperties> = {
+  loadingScreen: {
+    minHeight: "100vh",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    background: "#f0f7ff",
+  },
+  authPage: {
+    minHeight: "100vh",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    background: "linear-gradient(135deg, #1e40af 0%, #3b82f6 60%, #93c5fd 100%)",
+    padding: "20px",
+  },
+  authCard: {
+    background: "#fff",
+    borderRadius: 20,
+    padding: "40px 36px",
+    width: "100%",
+    maxWidth: 420,
+    boxShadow: "0 20px 60px rgba(30,64,175,0.25)",
+  },
+  logoArea: {
+    textAlign: "center",
+    marginBottom: 28,
+  },
+  brandTitle: {
+    fontSize: 28,
+    fontWeight: 800,
+    color: "#1e40af",
+    margin: "10px 0 4px",
+  },
+  brandSub: {
+    fontSize: 15,
+    color: "#64748b",
+    margin: 0,
+  },
+  tabRow: {
+    display: "flex",
+    borderRadius: 10,
+    overflow: "hidden",
+    border: "1.5px solid #dbeafe",
+    marginBottom: 24,
+  },
+  tab: {
+    flex: 1,
+    padding: "11px 0",
+    border: "none",
+    background: "#f8fafc",
+    color: "#64748b",
+    fontWeight: 600,
+    fontSize: 15,
+    cursor: "pointer",
+  },
+  tabActive: {
+    background: "#1e40af",
+    color: "#fff",
+  },
+  form: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 4,
+  },
+  label: {
+    fontSize: 13,
+    fontWeight: 600,
+    color: "#374151",
+    marginBottom: 2,
+    marginTop: 8,
+  },
+  input: {
+    width: "100%",
+    padding: "11px 14px",
+    borderRadius: 8,
+    border: "1.5px solid #dbeafe",
+    fontSize: 15,
+    color: "#1e293b",
+    background: "#f8faff",
+    boxSizing: "border-box",
+    outline: "none",
+    marginBottom: 4,
+  },
+  primaryBtn: {
+    marginTop: 8,
+    padding: "13px 0",
+    background: "#1e40af",
+    color: "#fff",
+    border: "none",
+    borderRadius: 8,
+    fontSize: 16,
+    fontWeight: 700,
+    cursor: "pointer",
+    width: "100%",
+  },
+  errorMsg: {
+    color: "#dc2626",
+    fontSize: 13,
+    margin: "4px 0 0",
+  },
+  successMsg: {
+    color: "#16a34a",
+    fontSize: 13,
+    marginTop: 8,
+  },
+  appShell: {
+    minHeight: "100vh",
+    background: "#f0f7ff",
+    fontFamily: "'Inter', 'Segoe UI', system-ui, sans-serif",
+  },
+  header: {
+    background: "#1e40af",
+    padding: "0 24px",
+    height: 60,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    boxShadow: "0 2px 12px rgba(30,64,175,0.3)",
+    position: "sticky",
+    top: 0,
+    zIndex: 100,
+  },
+  headerLeft: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+  },
+  headerBrand: {
+    color: "#fff",
+    fontWeight: 800,
+    fontSize: 20,
+    letterSpacing: "-0.3px",
+  },
+  headerRight: {
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+  },
+  urgentBadge: {
+    background: "#fbbf24",
+    color: "#78350f",
+    padding: "3px 10px",
+    borderRadius: 20,
+    fontSize: 12,
+    fontWeight: 700,
+  },
+  userEmail: {
+    color: "#bfdbfe",
+    fontSize: 13,
+    maxWidth: 180,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  logoutBtn: {
+    background: "rgba(255,255,255,0.12)",
+    border: "1px solid rgba(255,255,255,0.3)",
+    color: "#fff",
+    borderRadius: 6,
+    padding: "5px 12px",
+    fontSize: 13,
+    cursor: "pointer",
+    fontWeight: 600,
+  },
+  main: {
+    maxWidth: 900,
+    margin: "0 auto",
+    padding: "28px 16px 60px",
+  },
+  reminderSection: {
+    background: "#fff",
+    borderRadius: 16,
+    padding: "24px",
+    marginBottom: 24,
+    boxShadow: "0 2px 12px rgba(30,64,175,0.08)",
+    border: "1.5px solid #dbeafe",
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: 700,
+    color: "#1e40af",
+    margin: "0 0 6px",
+  },
+  sectionDesc: {
+    color: "#64748b",
+    fontSize: 14,
+    margin: "0 0 14px",
+  },
+  reminderForm: {
+    display: "flex",
+    gap: 10,
+    alignItems: "flex-end",
+  },
+  currentReminder: {
+    color: "#64748b",
+    fontSize: 13,
+    marginTop: 8,
+  },
+  deadlineSection: {
+    background: "#fff",
+    borderRadius: 16,
+    padding: "24px",
+    boxShadow: "0 2px 12px rgba(30,64,175,0.08)",
+    border: "1.5px solid #dbeafe",
+  },
+  deadlineHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 16,
+  },
+  addBtn: {
+    background: "#1e40af",
+    color: "#fff",
+    border: "none",
+    borderRadius: 8,
+    padding: "9px 18px",
+    fontSize: 14,
+    fontWeight: 700,
+    cursor: "pointer",
+  },
+  filterRow: {
+    display: "flex",
+    gap: 8,
+    marginBottom: 20,
+  },
+  filterBtn: {
+    padding: "6px 16px",
+    borderRadius: 20,
+    border: "1.5px solid #dbeafe",
+    background: "#f8faff",
+    color: "#64748b",
+    fontSize: 13,
+    fontWeight: 600,
+    cursor: "pointer",
+  },
+  filterBtnActive: {
+    background: "#1e40af",
+    color: "#fff",
+    borderColor: "#1e40af",
+  },
+  emptyState: {
+    textAlign: "center",
+    padding: "60px 20px",
+  },
+  cardGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
+    gap: 16,
+  },
+  deadlineCard: {
+    border: "1.5px solid #dbeafe",
+    borderRadius: 14,
+    padding: "18px",
+    background: "#f8faff",
+    transition: "box-shadow 0.15s",
+  },
+  cardTop: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 10,
+  },
+  schoolName: {
+    fontSize: 16,
+    fontWeight: 700,
+    color: "#1e293b",
+    lineHeight: 1.3,
+  },
+  appType: {
+    fontSize: 12,
+    color: "#3b82f6",
+    fontWeight: 600,
+    marginTop: 3,
+  },
+  daysChip: {
+    fontSize: 13,
+    fontWeight: 700,
+    border: "1.5px solid",
+    borderRadius: 20,
+    padding: "3px 10px",
+    whiteSpace: "nowrap",
+    marginLeft: 8,
+  },
+  deadlineDateRow: {
+    display: "flex",
+    gap: 6,
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  deadlineDateLabel: {
+    fontSize: 12,
+    color: "#94a3b8",
+    fontWeight: 600,
+  },
+  deadlineDateVal: {
+    fontSize: 13,
+    color: "#334155",
+    fontWeight: 600,
+  },
+  notes: {
+    fontSize: 13,
+    color: "#64748b",
+    marginBottom: 8,
+    fontStyle: "italic",
+  },
+  reminderSentTag: {
+    fontSize: 12,
+    color: "#16a34a",
+    fontWeight: 600,
+    marginBottom: 6,
+  },
+  cardActions: {
+    display: "flex",
+    gap: 8,
+    marginTop: 12,
+  },
+  editBtn: {
+    flex: 1,
+    padding: "7px 0",
+    background: "#eff6ff",
+    color: "#1e40af",
+    border: "1.5px solid #bfdbfe",
+    borderRadius: 7,
+    fontSize: 13,
+    fontWeight: 700,
+    cursor: "pointer",
+  },
+  deleteBtn: {
+    flex: 1,
+    padding: "7px 0",
+    background: "#fff5f5",
+    color: "#dc2626",
+    border: "1.5px solid #fecaca",
+    borderRadius: 7,
+    fontSize: 13,
+    fontWeight: 700,
+    cursor: "pointer",
+  },
+  modalOverlay: {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(15,23,42,0.5)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 200,
+    padding: 16,
+  },
+  modal: {
+    background: "#fff",
+    borderRadius: 18,
+    padding: "32px 28px",
+    width: "100%",
+    maxWidth: 480,
+    boxShadow: "0 20px 60px rgba(0,0,0,0.25)",
+    maxHeight: "90vh",
+    overflowY: "auto",
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: 800,
+    color: "#1e40af",
+    margin: "0 0 20px",
+  },
+  modalActions: {
+    display: "flex",
+    gap: 10,
+    marginTop: 12,
+  },
+  cancelBtn: {
+    flex: 1,
+    padding: "13px 0",
+    background: "#f1f5f9",
+    color: "#475569",
+    border: "none",
+    borderRadius: 8,
+    fontSize: 15,
+    fontWeight: 700,
+    cursor: "pointer",
+  },
+  suggestions: {
+    position: "absolute",
+    top: "100%",
+    left: 0,
+    right: 0,
+    background: "#fff",
+    border: "1.5px solid #dbeafe",
+    borderRadius: 8,
+    zIndex: 300,
+    boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
+    maxHeight: 220,
+    overflowY: "auto",
+  },
+  suggestion: {
+    padding: "10px 14px",
+    fontSize: 14,
+    color: "#1e293b",
+    cursor: "pointer",
+    borderBottom: "1px solid #f1f5f9",
+  },
 };

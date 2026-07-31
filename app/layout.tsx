@@ -1,5 +1,19 @@
 import "./globals.css";
-export const metadata = { title: "Edutracker" };
+import InstallPrompt from "./components/InstallPrompt";
+
+export const metadata = {
+  title: "Edutracker",
+  appleWebApp: { capable: true, statusBarStyle: "black-translucent", title: "Edutracker" },
+};
+export const viewport = { themeColor: "#0b1020", width: "device-width", initialScale: 1 };
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
-  return (<html lang="en"><body>{children}</body></html>);
+  return (
+    <html lang="en">
+      <body>
+        {children}
+        <InstallPrompt />
+      </body>
+    </html>
+  );
 }

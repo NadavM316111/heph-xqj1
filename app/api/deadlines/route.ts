@@ -1,93 +1,105 @@
 import { NextRequest, NextResponse } from "next/server";
-import { q, ensure, hasDb } from "../../../lib/db";
+import { q, ensure, hasDb } from "@/lib/db";
+import { getSessionEmail } from "@/lib/session";
 
-const T = (process.env.APP_TABLE_PREFIX || "et") + "_";
-
-async function ensureTables() {
+async function setupTable() {
   await ensure(`
-    CREATE TABLE IF NOT EXISTS ${T}colleges (
+    CREATE TABLE IF NOT EXISTS __APP_deadlines (
       id SERIAL PRIMARY KEY,
       user_email TEXT NOT NULL,
-      name TEXT NOT NULL,
-      location TEXT DEFAULT '',
-      added_at TIMESTAMPTZ DEFAULT NOW(),
-      UNIQUE(user_email, name)
-    )
-  `);
-  await ensure(`
-    CREATE TABLE IF NOT EXISTS ${T}deadlines (
-      id SERIAL PRIMARY KEY,
-      user_email TEXT NOT NULL,
-      college_id INTEGER NOT NULL REFERENCES ${T}colleges(id) ON DELETE CASCADE,
-      deadline_type TEXT NOT NULL,
+      school_name TEXT NOT NULL,
+      application_type TEXT NOT NULL,
       deadline_date DATE NOT NULL,
       notes TEXT DEFAULT '',
-      created_at TIMESTAMPTZ DEFAULT NOW(),
-      UNIQUE(user_email, college_id, deadline_type)
+      email_reminder_sent BOOLEAN DEFAULT FALSE,
+      created_at TIMESTAMPTZ DEFAULT NOW()
     )
   `);
 }
 
 export async function GET(req: NextRequest) {
   if (!hasDb()) return NextResponse.json({ deadlines: [] });
-  const email = req.nextUrl.searchParams.get("email");
-  if (!email) return NextResponse.json({ error: "Missing email" }, { status: 400 });
-  try {
-    await ensureTables();
-    const rows = await q(
-      `SELECT d.id, d.college_id, c.name AS college_name, c.location AS college_location,
-              d.deadline_type, d.deadline_date::text, d.notes
-       FROM ${T}deadlines d
-       JOIN ${T}colleges c ON c.id = d.college_id
-       WHERE d.user_email = $1
-       ORDER BY d.deadline_date ASC`,
-      [email]
-    );
-    return NextResponse.json({ deadlines: rows });
-  } catch (e) {
-    console.error(e);
-    return NextResponse.json({ error: "DB error" }, { status: 500 });
-  }
+  const email = await getSessionEmail(req);
+  if (!email) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+
+  await setupTable();
+
+  const rows = await q(
+    `SELECT id, school_name, application_type, deadline_date::text, notes, email_reminder_sent,
+      (deadline_date - CURRENT_DATE) AS days_until
+     FROM __APP_deadlines
+     WHERE user_email = $1
+     ORDER BY deadline_date ASC`,
+    [email]
+  );
+
+  return NextResponse.json({ deadlines: rows });
 }
 
 export async function POST(req: NextRequest) {
-  if (!hasDb()) return NextResponse.json({ error: "No database" }, { status: 503 });
+  if (!hasDb()) return NextResponse.json({ error: "No DB" }, { status: 500 });
+  const email = await getSessionEmail(req);
+  if (!email) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+
+  await setupTable();
+
   const body = await req.json();
-  const { email, college_id, deadline_type, deadline_date, notes } = body;
-  if (!email || !college_id || !deadline_type || !deadline_date) {
+  const { school_name, application_type, deadline_date, notes } = body;
+
+  if (!school_name || !deadline_date) {
     return NextResponse.json({ error: "Missing fields" }, { status: 400 });
   }
-  try {
-    await ensureTables();
-    const rows = await q(
-      `INSERT INTO ${T}deadlines (user_email, college_id, deadline_type, deadline_date, notes)
-       VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT (user_email, college_id, deadline_type)
-       DO UPDATE SET deadline_date = EXCLUDED.deadline_date, notes = EXCLUDED.notes
-       RETURNING id, college_id, deadline_type, deadline_date::text, notes`,
-      [email, college_id, deadline_type, deadline_date, notes || ""]
-    );
-    return NextResponse.json({ deadline: rows[0] });
-  } catch (e) {
-    console.error(e);
-    return NextResponse.json({ error: "DB error" }, { status: 500 });
+
+  const rows = await q(
+    `INSERT INTO __APP_deadlines (user_email, school_name, application_type, deadline_date, notes)
+     VALUES ($1, $2, $3, $4, $5)
+     RETURNING id`,
+    [email, school_name, application_type || "Regular Decision (RD)", deadline_date, notes || ""]
+  );
+
+  return NextResponse.json({ ok: true, id: rows[0]?.id });
+}
+
+export async function PUT(req: NextRequest) {
+  if (!hasDb()) return NextResponse.json({ error: "No DB" }, { status: 500 });
+  const email = await getSessionEmail(req);
+  if (!email) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+
+  await setupTable();
+
+  const body = await req.json();
+  const { id, school_name, application_type, deadline_date, notes } = body;
+
+  if (!id || !school_name || !deadline_date) {
+    return NextResponse.json({ error: "Missing fields" }, { status: 400 });
   }
+
+  await q(
+    `UPDATE __APP_deadlines
+     SET school_name = $1, application_type = $2, deadline_date = $3, notes = $4
+     WHERE id = $5 AND user_email = $6`,
+    [school_name, application_type || "Regular Decision (RD)", deadline_date, notes || "", id, email]
+  );
+
+  return NextResponse.json({ ok: true });
 }
 
 export async function DELETE(req: NextRequest) {
-  if (!hasDb()) return NextResponse.json({ error: "No database" }, { status: 503 });
-  const id = req.nextUrl.searchParams.get("id");
-  const email = req.nextUrl.searchParams.get("email");
-  if (!id || !email) return NextResponse.json({ error: "Missing params" }, { status: 400 });
-  try {
-    await ensureTables();
-    await q(
-      `DELETE FROM ${T}deadlines WHERE id = $1 AND user_email = $2`,
-      [parseInt(id), email]
-    );
-    return NextResponse.json({ ok: true });
-  } catch (e) {
-    console.error(e);
-    return NextResponse.json({ error: "DB error" }, { status: 500 });
-  }
+  if (!hasDb()) return NextResponse.json({ error: "No DB" }, { status: 500 });
+  const email = await getSessionEmail(req);
+  if (!email) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+
+  await setupTable();
+
+  const body = await req.json();
+  const { id } = body;
+
+  if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
+
+  await q(
+    `DELETE FROM __APP_deadlines WHERE id = $1 AND user_email = $2`,
+    [id, email]
+  );
+
+  return NextResponse.json({ ok: true });
 }
