@@ -1,100 +1,114 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { COLLEGES, College, Deadline } from "@/lib/colleges";
+import { useState, useEffect } from "react";
+import {
+  COLLEGES,
+  type College,
+  type AppType,
+  getDeadline,
+} from "@/lib/colleges";
 
-type Screen = "auth" | "onboarding" | "dashboard";
-
-interface DeadlineRow {
-  college: College;
-  deadline: Deadline;
-  daysLeft: number;
-  completed: boolean;
+interface TrackedCollege {
+  id: string;
+  name: string;
+  appType: AppType;
+  deadline: string; // ISO date string
+  customDeadline: boolean;
+  location: string;
+  website: string;
 }
 
-interface DeadlineStatus {
-  college_id: string;
-  deadline_type: string;
-  deadline_date: string;
-  completed: boolean;
-}
+const APP_TYPES: AppType[] = ["EA", "ED", "ED2", "RD", "Rolling"];
 
-function getDaysLeft(dateStr: string): number {
+const APP_TYPE_LABELS: Record<AppType, string> = {
+  EA: "Early Action",
+  ED: "Early Decision",
+  ED2: "Early Decision II",
+  RD: "Regular Decision",
+  Rolling: "Rolling Admissions",
+};
+
+function getDaysUntil(deadline: string): number {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  const deadline = new Date(dateStr + "T00:00:00");
-  const diff = deadline.getTime() - today.getTime();
-  return Math.ceil(diff / (1000 * 60 * 60 * 24));
+  const d = new Date(deadline);
+  d.setHours(0, 0, 0, 0);
+  return Math.ceil((d.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
 }
 
-function urgencyColor(days: number, completed: boolean): string {
-  if (completed) return "#4caf50";
-  if (days < 0) return "#9e9e9e";
-  if (days < 7) return "#f44336";
-  if (days < 30) return "#ff9800";
-  return "#4caf50";
+function getUrgencyColor(days: number): string {
+  if (days < 0) return "#9ca3af";
+  if (days < 7) return "#ef4444";
+  if (days < 30) return "#f59e0b";
+  return "#22c55e";
 }
 
-function urgencyBg(days: number, completed: boolean): string {
-  if (completed) return "#e8f5e9";
-  if (days < 0) return "#f5f5f5";
-  if (days < 7) return "#ffebee";
-  if (days < 30) return "#fff3e0";
-  return "#e8f5e9";
+function getUrgencyBg(days: number): string {
+  if (days < 0) return "#f9fafb";
+  if (days < 7) return "#fef2f2";
+  if (days < 30) return "#fffbeb";
+  return "#f0fdf4";
 }
 
-function urgencyLabel(days: number, completed: boolean): string {
-  if (completed) return "Done";
-  if (days < 0) return "Passed";
-  if (days === 0) return "TODAY!";
-  if (days === 1) return "1 day";
-  if (days < 7) return `${days} days`;
-  if (days < 30) return `${days} days`;
-  return `${days} days`;
+function getUrgencyBorder(days: number): string {
+  if (days < 0) return "#e5e7eb";
+  if (days < 7) return "#fecaca";
+  if (days < 30) return "#fde68a";
+  return "#bbf7d0";
 }
 
-function deadlineTypeColor(type: string): string {
-  switch (type) {
-    case "ED": return "#7b1fa2";
-    case "ED2": return "#ad1457";
-    case "EA": return "#1565c0";
-    case "RD": return "#2e7d32";
-    case "Scholarship": return "#e65100";
-    default: return "#555";
-  }
+function formatDeadline(dateStr: string): string {
+  const d = new Date(dateStr);
+  return d.toLocaleDateString("en-US", {
+    weekday: "short",
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+function formatCountdown(days: number): string {
+  if (days < 0) return `${Math.abs(days)} day${Math.abs(days) !== 1 ? "s" : ""} ago`;
+  if (days === 0) return "Due today!";
+  if (days === 1) return "1 day left";
+  return `${days} days left`;
 }
 
 export default function Home() {
-  const [screen, setScreen] = useState<Screen>("auth");
-  const [authMode, setAuthMode] = useState<"login" | "signup">("login");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [authError, setAuthError] = useState("");
-  const [authLoading, setAuthLoading] = useState(false);
-  const [userEmail, setUserEmail] = useState<string | null>(null);
-
-  // Onboarding
+  const [tracked, setTracked] = useState<TrackedCollege[]>([]);
+  const [onboarding, setOnboarding] = useState(false);
+  const [onboardingStep, setOnboardingStep] = useState(0);
+  const [onboardingColleges, setOnboardingColleges] = useState<TrackedCollege[]>([]);
+  const [showAddModal, setShowAddModal] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [onboardingLoading, setOnboardingLoading] = useState(false);
+  const [selectedCollege, setSelectedCollege] = useState<College | null>(null);
+  const [manualName, setManualName] = useState("");
+  const [manualLocation, setManualLocation] = useState("");
+  const [manualWebsite, setManualWebsite] = useState("");
+  const [selectedAppType, setSelectedAppType] = useState<AppType>("RD");
+  const [customDeadlineInput, setCustomDeadlineInput] = useState("");
+  const [useCustomDeadline, setUseCustomDeadline] = useState(false);
+  const [isManualEntry, setIsManualEntry] = useState(false);
+  const [searchFocused, setSearchFocused] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [filterType, setFilterType] = useState<AppType | "All">("All");
+  const [loaded, setLoaded] = useState(false);
 
-  // Dashboard
-  const [deadlineRows, setDeadlineRows] = useState<DeadlineRow[]>([]);
-  const [statuses, setStatuses] = useState<Map<string, boolean>>(new Map());
-  const [filterType, setFilterType] = useState<string>("All");
-  const [filterStatus, setFilterStatus] = useState<string>("All");
-  const [now, setNow] = useState(new Date());
-  const [editingSchools, setEditingSchools] = useState(false);
-  const [dashboardLoading, setDashboardLoading] = useState(false);
-
-  // Tick every minute
   useEffect(() => {
-    const interval = setInterval(() => setNow(new Date()), 60000);
-    return () => clearInterval(interval);
-  }, []);
+    const stored = localStorage.getItem("edutracker_colleges");
+    const hasOnboarded = localStorage.getItem("edutracker_onboarded");
+    if (stored) {
+      try {
+        setTracked(JSON.parse(stored));
+      } catch {
+        setTracked([]);
+      }
+    }
+    if (!hasOnboarded) {
+      setOnboarding(true);
+    }
+    setLoaded(true);
 
-  // Analytics
-  useEffect(() => {
     fetch("/api/track", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -102,959 +116,1069 @@ export default function Home() {
     }).catch(() => {});
   }, []);
 
-  // Load saved session
   useEffect(() => {
-    const saved = localStorage.getItem("edutracker_email");
-    if (saved) {
-      setUserEmail(saved);
-      loadUserData(saved);
+    if (loaded) {
+      localStorage.setItem("edutracker_colleges", JSON.stringify(tracked));
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [tracked, loaded]);
 
-  const statusKey = (collegeId: string, type: string, date: string) =>
-    `${collegeId}__${type}__${date}`;
+  const filteredSearch = searchQuery.length > 0
+    ? COLLEGES.filter(
+        (c) =>
+          c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          c.location.toLowerCase().includes(searchQuery.toLowerCase())
+      ).slice(0, 8)
+    : [];
 
-  const loadUserData = useCallback(async (em: string) => {
-    setDashboardLoading(true);
-    try {
-      const [schoolsRes, statusesRes] = await Promise.all([
-        fetch(`/api/schools?email=${encodeURIComponent(em)}`),
-        fetch(`/api/deadline-status?email=${encodeURIComponent(em)}`),
-      ]);
-      const schoolsData = await schoolsRes.json();
-      const statusesData = await statusesRes.json();
+  function resetModal() {
+    setSearchQuery("");
+    setSelectedCollege(null);
+    setManualName("");
+    setManualLocation("");
+    setManualWebsite("");
+    setSelectedAppType("RD");
+    setCustomDeadlineInput("");
+    setUseCustomDeadline(false);
+    setIsManualEntry(false);
+    setEditingId(null);
+  }
 
-      const collegeIds: string[] = schoolsData.colleges ?? [];
-      const statusList: DeadlineStatus[] = statusesData.statuses ?? [];
-
-      const statusMap = new Map<string, boolean>();
-      for (const s of statusList) {
-        statusMap.set(statusKey(s.college_id, s.deadline_type, s.deadline_date), s.completed);
+  function buildTrackedCollege(overrideId?: string): TrackedCollege | null {
+    const id = overrideId ?? `tc_${Date.now()}_${Math.random()}`;
+    if (isManualEntry) {
+      if (!manualName.trim()) return null;
+      const deadline = customDeadlineInput || new Date(new Date().getFullYear() + 1, 0, 1).toISOString().split("T")[0];
+      return {
+        id,
+        name: manualName.trim(),
+        appType: selectedAppType,
+        deadline,
+        customDeadline: true,
+        location: manualLocation.trim(),
+        website: manualWebsite.trim(),
+      };
+    } else {
+      if (!selectedCollege) return null;
+      let deadline = getDeadline(selectedCollege, selectedAppType);
+      let customDeadline = false;
+      if (useCustomDeadline && customDeadlineInput) {
+        deadline = customDeadlineInput;
+        customDeadline = true;
+      } else if (!deadline) {
+        if (customDeadlineInput) {
+          deadline = customDeadlineInput;
+          customDeadline = true;
+        } else {
+          deadline = new Date(new Date().getFullYear() + 1, 0, 1).toISOString().split("T")[0];
+          customDeadline = true;
+        }
       }
-      setStatuses(statusMap);
-
-      if (collegeIds.length === 0) {
-        setScreen("onboarding");
-        setDashboardLoading(false);
-        return;
-      }
-
-      setSelectedIds(new Set(collegeIds));
-      buildDashboard(collegeIds, statusMap);
-      setScreen("dashboard");
-    } catch {
-      setScreen("onboarding");
+      return {
+        id,
+        name: selectedCollege.name,
+        appType: selectedAppType,
+        deadline: deadline as string,
+        customDeadline,
+        location: selectedCollege.location,
+        website: selectedCollege.website,
+      };
     }
-    setDashboardLoading(false);
-  }, []);
+  }
 
-  const buildDashboard = (collegeIds: string[], statusMap: Map<string, boolean>) => {
-    const rows: DeadlineRow[] = [];
-    for (const id of collegeIds) {
-      const college = COLLEGES.find((c) => c.id === id);
-      if (!college) continue;
-      for (const dl of college.deadlines) {
-        const days = getDaysLeft(dl.date);
-        const completed = statusMap.get(statusKey(id, dl.type, dl.date)) ?? false;
-        rows.push({ college, deadline: dl, daysLeft: days, completed });
-      }
+  function handleAddCollege() {
+    const entry = buildTrackedCollege();
+    if (!entry) return;
+    const exists = tracked.find(
+      (t) => t.name === entry.name && t.appType === entry.appType
+    );
+    if (exists) {
+      alert(`${entry.name} (${entry.appType}) is already in your list!`);
+      return;
     }
-    rows.sort((a, b) => {
-      if (a.completed && !b.completed) return 1;
-      if (!a.completed && b.completed) return -1;
-      return a.daysLeft - b.daysLeft;
+    setTracked((prev) => [...prev, entry]);
+    setShowAddModal(false);
+    resetModal();
+  }
+
+  function handleSaveEdit() {
+    if (!editingId) return;
+    const entry = buildTrackedCollege(editingId);
+    if (!entry) return;
+    setTracked((prev) => prev.map((t) => (t.id === editingId ? entry : t)));
+    setShowAddModal(false);
+    resetModal();
+  }
+
+  function openEdit(college: TrackedCollege) {
+    setEditingId(college.id);
+    setSelectedCollege(COLLEGES.find((c) => c.name === college.name) ?? null);
+    setManualName(college.name);
+    setManualLocation(college.location);
+    setManualWebsite(college.website);
+    setSelectedAppType(college.appType);
+    setCustomDeadlineInput(college.deadline);
+    setUseCustomDeadline(college.customDeadline);
+    setIsManualEntry(!COLLEGES.find((c) => c.name === college.name));
+    setShowAddModal(true);
+  }
+
+  function handleDelete(id: string) {
+    if (confirm("Remove this college from your tracker?")) {
+      setTracked((prev) => prev.filter((t) => t.id !== id));
+    }
+  }
+
+  // Onboarding
+  function handleOnboardingAdd() {
+    const entry = buildTrackedCollege();
+    if (!entry) return;
+    const exists = onboardingColleges.find(
+      (t) => t.name === entry.name && t.appType === entry.appType
+    );
+    if (exists) {
+      alert(`${entry.name} (${entry.appType}) is already added!`);
+      return;
+    }
+    const next = [...onboardingColleges, entry];
+    setOnboardingColleges(next);
+    resetModal();
+    if (next.length >= 3) {
+      finishOnboarding(next);
+    } else {
+      setOnboardingStep(next.length);
+    }
+  }
+
+  function finishOnboarding(colleges?: TrackedCollege[]) {
+    const toAdd = colleges ?? onboardingColleges;
+    setTracked(toAdd);
+    localStorage.setItem("edutracker_onboarded", "true");
+    setOnboarding(false);
+    setOnboardingStep(0);
+    setOnboardingColleges([]);
+    resetModal();
+  }
+
+  function skipOnboarding() {
+    localStorage.setItem("edutracker_onboarded", "true");
+    setOnboarding(false);
+    setOnboardingStep(0);
+    setOnboardingColleges([]);
+    resetModal();
+  }
+
+  const autoDeadline = selectedCollege && !isManualEntry
+    ? getDeadline(selectedCollege, selectedAppType)
+    : null;
+
+  const sortedTracked = [...tracked]
+    .filter((t) => filterType === "All" || t.appType === filterType)
+    .sort((a, b) => {
+      const da = getDaysUntil(a.deadline);
+      const db = getDaysUntil(b.deadline);
+      // Past deadlines go to bottom
+      if (da < 0 && db >= 0) return 1;
+      if (db < 0 && da >= 0) return -1;
+      return da - db;
     });
-    setDeadlineRows(rows);
-  };
 
-  const handleAuth = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setAuthLoading(true);
-    setAuthError("");
-    try {
-      const res = await fetch("/api/auth", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: authMode, email, password }),
-      });
-      const data = await res.json();
-      if (data.ok) {
-        setUserEmail(data.email);
-        localStorage.setItem("edutracker_email", data.email);
-        await loadUserData(data.email);
-      } else {
-        setAuthError(data.error ?? "Something went wrong");
-      }
-    } catch {
-      setAuthError("Network error. Please try again.");
-    }
-    setAuthLoading(false);
-  };
+  const upcomingCount = tracked.filter((t) => getDaysUntil(t.deadline) >= 0).length;
+  const urgentCount = tracked.filter((t) => {
+    const d = getDaysUntil(t.deadline);
+    return d >= 0 && d < 7;
+  }).length;
 
-  const handleLogout = () => {
-    localStorage.removeItem("edutracker_email");
-    setUserEmail(null);
-    setSelectedIds(new Set());
-    setDeadlineRows([]);
-    setStatuses(new Map());
-    setScreen("auth");
-    setEmail("");
-    setPassword("");
-  };
-
-  const toggleSchool = (id: string) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  const handleOnboardingSave = async () => {
-    if (!userEmail || selectedIds.size === 0) return;
-    setOnboardingLoading(true);
-    try {
-      await fetch("/api/schools", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: userEmail, collegeIds: Array.from(selectedIds) }),
-      });
-      buildDashboard(Array.from(selectedIds), statuses);
-      setScreen("dashboard");
-    } catch {
-      alert("Failed to save schools. Please try again.");
-    }
-    setOnboardingLoading(false);
-    setEditingSchools(false);
-  };
-
-  const handleToggleComplete = async (row: DeadlineRow) => {
-    if (!userEmail) return;
-    const key = statusKey(row.college.id, row.deadline.type, row.deadline.date);
-    const newVal = !row.completed;
-    const newStatuses = new Map(statuses);
-    newStatuses.set(key, newVal);
-    setStatuses(newStatuses);
-
-    // Optimistically update rows
-    buildDashboard(Array.from(selectedIds), newStatuses);
-
-    try {
-      await fetch("/api/deadline-status", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: userEmail,
-          collegeId: row.college.id,
-          deadlineType: row.deadline.type,
-          deadlineDate: row.deadline.date,
-          completed: newVal,
-        }),
-      });
-    } catch {
-      // Revert on failure
-      newStatuses.set(key, !newVal);
-      setStatuses(new Map(newStatuses));
-      buildDashboard(Array.from(selectedIds), newStatuses);
-    }
-  };
-
-  const filteredColleges = COLLEGES.filter((c) =>
-    c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    c.location.toLowerCase().includes(searchQuery.toLowerCase())
-  );
-
-  const filteredRows = deadlineRows.filter((row) => {
-    if (filterType !== "All" && row.deadline.type !== filterType) return false;
-    if (filterStatus === "Pending" && row.completed) return false;
-    if (filterStatus === "Completed" && !row.completed) return false;
-    if (filterStatus === "Upcoming" && (row.daysLeft < 0 || row.completed)) return false;
-    if (filterStatus === "Passed" && row.daysLeft >= 0) return false;
-    return true;
-  });
-
-  const pendingCount = deadlineRows.filter((r) => !r.completed && r.daysLeft >= 0).length;
-  const urgentCount = deadlineRows.filter((r) => !r.completed && r.daysLeft >= 0 && r.daysLeft < 7).length;
-  const completedCount = deadlineRows.filter((r) => r.completed).length;
-
-  // Countdown for a specific date
-  const getCountdown = (dateStr: string) => {
-    const deadline = new Date(dateStr + "T23:59:59");
-    const diff = deadline.getTime() - now.getTime();
-    if (diff <= 0) return null;
-    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-    const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-    const mins = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-    if (days > 0) return `${days}d ${hours}h`;
-    if (hours > 0) return `${hours}h ${mins}m`;
-    return `${mins}m`;
-  };
-
-  // ─── AUTH SCREEN ───────────────────────────────────────────────────
-  if (screen === "auth") {
+  if (!loaded) {
     return (
-      <div style={styles.page}>
-        <div style={styles.authCard}>
-          <div style={styles.logo}>
-            <span style={styles.logoIcon}>🎓</span>
-            <h1 style={styles.logoText}>EduTracker</h1>
-          </div>
-          <p style={styles.tagline}>Never miss a college application deadline</p>
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#f8fafc" }}>
+        <div style={{ fontSize: "1.2rem", color: "#64748b" }}>Loading Edutracker…</div>
+      </div>
+    );
+  }
 
-          <div style={styles.authTabs}>
+  // ===== ONBOARDING MODAL =====
+  if (onboarding) {
+    return (
+      <div style={{
+        minHeight: "100vh",
+        background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "1rem",
+        fontFamily: "'Segoe UI', system-ui, -apple-system, sans-serif",
+      }}>
+        <div style={{
+          background: "white",
+          borderRadius: "1.5rem",
+          padding: "2.5rem",
+          maxWidth: "540px",
+          width: "100%",
+          boxShadow: "0 25px 50px rgba(0,0,0,0.25)",
+        }}>
+          {onboardingStep === 0 && onboardingColleges.length === 0 ? (
+            <>
+              <div style={{ textAlign: "center", marginBottom: "2rem" }}>
+                <div style={{ fontSize: "3rem", marginBottom: "0.5rem" }}>🎓</div>
+                <h1 style={{ fontSize: "1.8rem", fontWeight: 800, color: "#1e293b", margin: 0 }}>
+                  Welcome to Edutracker
+                </h1>
+                <p style={{ color: "#64748b", marginTop: "0.5rem", lineHeight: 1.6 }}>
+                  Never miss a college application deadline again. Let's add your first colleges to track.
+                </p>
+              </div>
+              <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1.5rem", justifyContent: "center" }}>
+                {[0, 1, 2].map((i) => (
+                  <div key={i} style={{
+                    width: "2.5rem", height: "0.375rem", borderRadius: "9999px",
+                    background: i === 0 ? "#667eea" : "#e2e8f0",
+                    transition: "background 0.3s",
+                  }} />
+                ))}
+              </div>
+              <p style={{ textAlign: "center", color: "#94a3b8", marginBottom: "1.5rem", fontSize: "0.9rem" }}>
+                Step 1 of 3 — Add your first college
+              </p>
+            </>
+          ) : (
+            <>
+              <div style={{ textAlign: "center", marginBottom: "1.5rem" }}>
+                <div style={{ fontSize: "2rem", marginBottom: "0.5rem" }}>
+                  {onboardingColleges.length === 1 ? "✅" : "🔥"}
+                </div>
+                <h2 style={{ fontSize: "1.4rem", fontWeight: 700, color: "#1e293b", margin: 0 }}>
+                  {onboardingColleges.length === 1
+                    ? "Great start! Add another."
+                    : "Almost there! One more."}
+                </h2>
+                <div style={{ display: "flex", gap: "0.5rem", marginTop: "1rem", justifyContent: "center" }}>
+                  {[0, 1, 2].map((i) => (
+                    <div key={i} style={{
+                      width: "2.5rem", height: "0.375rem", borderRadius: "9999px",
+                      background: i <= onboardingStep ? "#667eea" : "#e2e8f0",
+                      transition: "background 0.3s",
+                    }} />
+                  ))}
+                </div>
+                <p style={{ color: "#94a3b8", marginTop: "0.5rem", fontSize: "0.9rem" }}>
+                  Step {onboardingStep + 1} of 3
+                </p>
+              </div>
+              {onboardingColleges.length > 0 && (
+                <div style={{ background: "#f8fafc", borderRadius: "0.75rem", padding: "0.75rem", marginBottom: "1rem" }}>
+                  {onboardingColleges.map((c) => (
+                    <div key={c.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0.375rem 0" }}>
+                      <span style={{ fontWeight: 600, color: "#1e293b", fontSize: "0.9rem" }}>{c.name}</span>
+                      <span style={{ fontSize: "0.8rem", color: "#64748b", background: "#e2e8f0", padding: "0.2rem 0.5rem", borderRadius: "9999px" }}>
+                        {c.appType} · {formatDeadline(c.deadline)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+
+          <CollegeForm
+            searchQuery={searchQuery}
+            setSearchQuery={setSearchQuery}
+            filteredSearch={filteredSearch}
+            selectedCollege={selectedCollege}
+            setSelectedCollege={setSelectedCollege}
+            manualName={manualName}
+            setManualName={setManualName}
+            manualLocation={manualLocation}
+            setManualLocation={setManualLocation}
+            manualWebsite={manualWebsite}
+            setManualWebsite={setManualWebsite}
+            selectedAppType={selectedAppType}
+            setSelectedAppType={setSelectedAppType}
+            customDeadlineInput={customDeadlineInput}
+            setCustomDeadlineInput={setCustomDeadlineInput}
+            useCustomDeadline={useCustomDeadline}
+            setUseCustomDeadline={setUseCustomDeadline}
+            isManualEntry={isManualEntry}
+            setIsManualEntry={setIsManualEntry}
+            searchFocused={searchFocused}
+            setSearchFocused={setSearchFocused}
+            autoDeadline={autoDeadline}
+          />
+
+          <div style={{ display: "flex", gap: "0.75rem", marginTop: "1.5rem" }}>
             <button
-              style={{ ...styles.authTab, ...(authMode === "login" ? styles.authTabActive : {}) }}
-              onClick={() => { setAuthMode("login"); setAuthError(""); }}
+              onClick={handleOnboardingAdd}
+              style={{
+                flex: 1,
+                background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+                color: "white",
+                border: "none",
+                borderRadius: "0.75rem",
+                padding: "0.875rem",
+                fontWeight: 700,
+                fontSize: "1rem",
+                cursor: "pointer",
+              }}
             >
-              Sign In
-            </button>
-            <button
-              style={{ ...styles.authTab, ...(authMode === "signup" ? styles.authTabActive : {}) }}
-              onClick={() => { setAuthMode("signup"); setAuthError(""); }}
-            >
-              Sign Up
+              Add College
             </button>
           </div>
 
-          <form onSubmit={handleAuth} style={styles.form}>
-            <label style={styles.label}>Email</label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              style={styles.input}
-              placeholder="you@email.com"
-              required
-            />
-            <label style={styles.label}>Password</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              style={styles.input}
-              placeholder="••••••••"
-              required
-              minLength={6}
-            />
-            {authError && <div style={styles.errorBox}>{authError}</div>}
-            <button type="submit" style={styles.btnPrimary} disabled={authLoading}>
-              {authLoading ? "Loading..." : authMode === "login" ? "Sign In" : "Create Account"}
-            </button>
-          </form>
-
-          <div style={styles.demoNote}>
-            <strong>Demo:</strong> use any email + a 6+ character password
+          <div style={{ textAlign: "center", marginTop: "1rem" }}>
+            {onboardingColleges.length > 0 ? (
+              <button
+                onClick={() => finishOnboarding()}
+                style={{ background: "none", border: "none", color: "#667eea", cursor: "pointer", fontSize: "0.9rem", fontWeight: 600 }}
+              >
+                Skip & go to dashboard →
+              </button>
+            ) : (
+              <button
+                onClick={skipOnboarding}
+                style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: "0.85rem" }}
+              >
+                Skip onboarding
+              </button>
+            )}
           </div>
         </div>
       </div>
     );
   }
 
-  // ─── ONBOARDING SCREEN ────────────────────────────────────────────
-  if (screen === "onboarding" || editingSchools) {
-    return (
-      <div style={styles.page}>
-        <div style={styles.onboardingCard}>
-          <div style={styles.onboardingHeader}>
-            <div style={styles.logo}>
-              <span style={styles.logoIcon}>🎓</span>
-              <span style={styles.logoText}>EduTracker</span>
-            </div>
-            {editingSchools && (
-              <button style={styles.btnOutline} onClick={() => { setEditingSchools(false); setScreen("dashboard"); }}>
-                ← Back
+  // ===== MAIN DASHBOARD =====
+  return (
+    <div style={{
+      minHeight: "100vh",
+      background: "#f8fafc",
+      fontFamily: "'Segoe UI', system-ui, -apple-system, sans-serif",
+    }}>
+      {/* Header */}
+      <header style={{
+        background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+        color: "white",
+        padding: "1.25rem 2rem",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        boxShadow: "0 4px 20px rgba(102,126,234,0.3)",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+          <span style={{ fontSize: "1.75rem" }}>🎓</span>
+          <div>
+            <h1 style={{ margin: 0, fontSize: "1.4rem", fontWeight: 800, letterSpacing: "-0.02em" }}>
+              Edutracker
+            </h1>
+            <p style={{ margin: 0, fontSize: "0.75rem", opacity: 0.8 }}>
+              College Application Deadline Tracker
+            </p>
+          </div>
+        </div>
+        <button
+          onClick={() => { resetModal(); setShowAddModal(true); }}
+          style={{
+            background: "rgba(255,255,255,0.2)",
+            border: "2px solid rgba(255,255,255,0.4)",
+            color: "white",
+            borderRadius: "0.75rem",
+            padding: "0.6rem 1.25rem",
+            fontWeight: 700,
+            fontSize: "0.9rem",
+            cursor: "pointer",
+            backdropFilter: "blur(10px)",
+            transition: "all 0.2s",
+          }}
+          onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.3)")}
+          onMouseLeave={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.2)")}
+        >
+          + Add College
+        </button>
+      </header>
+
+      <main style={{ maxWidth: "900px", margin: "0 auto", padding: "2rem 1rem" }}>
+        {/* Stats Bar */}
+        {tracked.length > 0 && (
+          <div style={{ display: "flex", gap: "1rem", marginBottom: "2rem", flexWrap: "wrap" }}>
+            {[
+              { label: "Total Tracked", value: tracked.length, color: "#667eea" },
+              { label: "Upcoming", value: upcomingCount, color: "#22c55e" },
+              { label: "Urgent (<7 days)", value: urgentCount, color: "#ef4444" },
+            ].map((stat) => (
+              <div key={stat.label} style={{
+                flex: "1 1 120px",
+                background: "white",
+                borderRadius: "1rem",
+                padding: "1.25rem",
+                textAlign: "center",
+                boxShadow: "0 2px 10px rgba(0,0,0,0.06)",
+                border: `2px solid ${stat.color}22`,
+              }}>
+                <div style={{ fontSize: "2rem", fontWeight: 800, color: stat.color }}>
+                  {stat.value}
+                </div>
+                <div style={{ fontSize: "0.8rem", color: "#64748b", marginTop: "0.25rem", fontWeight: 500 }}>
+                  {stat.label}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Filter Tabs */}
+        {tracked.length > 0 && (
+          <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1.5rem", flexWrap: "wrap" }}>
+            {(["All", ...APP_TYPES] as (AppType | "All")[]).map((type) => (
+              <button
+                key={type}
+                onClick={() => setFilterType(type)}
+                style={{
+                  padding: "0.4rem 1rem",
+                  borderRadius: "9999px",
+                  border: "2px solid",
+                  borderColor: filterType === type ? "#667eea" : "#e2e8f0",
+                  background: filterType === type ? "#667eea" : "white",
+                  color: filterType === type ? "white" : "#64748b",
+                  fontWeight: 600,
+                  fontSize: "0.85rem",
+                  cursor: "pointer",
+                  transition: "all 0.2s",
+                }}
+              >
+                {type === "All" ? "All" : APP_TYPE_LABELS[type]}
               </button>
-            )}
+            ))}
           </div>
+        )}
 
-          <h2 style={styles.onboardingTitle}>
-            {editingSchools ? "Edit Your Schools" : "Select Your Target Schools"}
-          </h2>
-          <p style={styles.onboardingSubtitle}>
-            Choose the colleges you're applying to. We'll track all their deadlines for you.
-          </p>
-
-          <div style={styles.searchRow}>
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search colleges..."
-              style={styles.searchInput}
-            />
-            <span style={styles.selectedCount}>{selectedIds.size} selected</span>
+        {/* College Cards */}
+        {sortedTracked.length === 0 && tracked.length === 0 ? (
+          <div style={{
+            textAlign: "center",
+            padding: "4rem 2rem",
+            background: "white",
+            borderRadius: "1.5rem",
+            boxShadow: "0 2px 10px rgba(0,0,0,0.06)",
+          }}>
+            <div style={{ fontSize: "4rem", marginBottom: "1rem" }}>📋</div>
+            <h2 style={{ color: "#1e293b", marginBottom: "0.5rem" }}>No colleges tracked yet</h2>
+            <p style={{ color: "#64748b", marginBottom: "1.5rem" }}>
+              Add colleges to start tracking their deadlines.
+            </p>
+            <button
+              onClick={() => { resetModal(); setShowAddModal(true); }}
+              style={{
+                background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+                color: "white",
+                border: "none",
+                borderRadius: "0.75rem",
+                padding: "0.875rem 2rem",
+                fontWeight: 700,
+                fontSize: "1rem",
+                cursor: "pointer",
+              }}
+            >
+              + Add Your First College
+            </button>
           </div>
-
-          <div style={styles.collegeGrid}>
-            {filteredColleges.map((college) => {
-              const selected = selectedIds.has(college.id);
+        ) : sortedTracked.length === 0 ? (
+          <div style={{ textAlign: "center", padding: "3rem", color: "#64748b" }}>
+            No colleges match this filter.
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+            {sortedTracked.map((college) => {
+              const days = getDaysUntil(college.deadline);
+              const color = getUrgencyColor(days);
+              const bg = getUrgencyBg(days);
+              const border = getUrgencyBorder(days);
               return (
                 <div
                   key={college.id}
                   style={{
-                    ...styles.collegeCard,
-                    ...(selected ? styles.collegeCardSelected : {}),
+                    background: bg,
+                    border: `2px solid ${border}`,
+                    borderRadius: "1.25rem",
+                    padding: "1.25rem 1.5rem",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "1rem",
+                    boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
+                    transition: "transform 0.15s, box-shadow 0.15s",
                   }}
-                  onClick={() => toggleSchool(college.id)}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.transform = "translateY(-2px)";
+                    e.currentTarget.style.boxShadow = "0 8px 20px rgba(0,0,0,0.1)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.transform = "translateY(0)";
+                    e.currentTarget.style.boxShadow = "0 2px 8px rgba(0,0,0,0.05)";
+                  }}
                 >
-                  <div style={styles.collegeCardCheck}>
-                    {selected ? "✓" : ""}
+                  {/* Countdown Circle */}
+                  <div style={{
+                    minWidth: "5.5rem",
+                    height: "5.5rem",
+                    borderRadius: "50%",
+                    background: color,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    color: "white",
+                    textAlign: "center",
+                    flexShrink: 0,
+                    boxShadow: `0 4px 12px ${color}55`,
+                  }}>
+                    {days < 0 ? (
+                      <>
+                        <span style={{ fontSize: "0.7rem", fontWeight: 700, opacity: 0.9 }}>PAST</span>
+                      </>
+                    ) : days === 0 ? (
+                      <span style={{ fontSize: "0.75rem", fontWeight: 800 }}>TODAY!</span>
+                    ) : (
+                      <>
+                        <span style={{ fontSize: "1.6rem", fontWeight: 800, lineHeight: 1 }}>{days}</span>
+                        <span style={{ fontSize: "0.65rem", fontWeight: 600, opacity: 0.9 }}>DAYS LEFT</span>
+                      </>
+                    )}
                   </div>
-                  <div style={styles.collegeName}>{college.name}</div>
-                  <div style={styles.collegeLocation}>📍 {college.location}</div>
-                  <div style={styles.collegeDeadlines}>
-                    {college.deadlines.map((d) => (
-                      <span
-                        key={d.type + d.date}
-                        style={{ ...styles.deadlineBadge, backgroundColor: deadlineTypeColor(d.type) }}
-                      >
-                        {d.type}
+
+                  {/* Info */}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
+                      <h3 style={{ margin: 0, fontSize: "1.05rem", fontWeight: 700, color: "#1e293b" }}>
+                        {college.name}
+                      </h3>
+                      <span style={{
+                        background: color,
+                        color: "white",
+                        padding: "0.15rem 0.6rem",
+                        borderRadius: "9999px",
+                        fontSize: "0.75rem",
+                        fontWeight: 700,
+                        flexShrink: 0,
+                      }}>
+                        {college.appType}
                       </span>
-                    ))}
+                      {college.customDeadline && (
+                        <span style={{
+                          background: "#e2e8f0",
+                          color: "#64748b",
+                          padding: "0.15rem 0.5rem",
+                          borderRadius: "9999px",
+                          fontSize: "0.7rem",
+                          fontWeight: 600,
+                        }}>
+                          Custom date
+                        </span>
+                      )}
+                    </div>
+                    <p style={{ margin: "0.25rem 0 0", color: "#475569", fontSize: "0.85rem" }}>
+                      {APP_TYPE_LABELS[college.appType]} Deadline: <strong>{formatDeadline(college.deadline)}</strong>
+                    </p>
+                    {college.location && (
+                      <p style={{ margin: "0.15rem 0 0", color: "#94a3b8", fontSize: "0.8rem" }}>
+                        📍 {college.location}
+                      </p>
+                    )}
+                    <p style={{
+                      margin: "0.35rem 0 0",
+                      fontSize: "0.85rem",
+                      fontWeight: 700,
+                      color: days < 0 ? "#9ca3af" : color,
+                    }}>
+                      {formatCountdown(days)}
+                    </p>
+                  </div>
+
+                  {/* Actions */}
+                  <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", flexShrink: 0 }}>
+                    {college.website && (
+                      <a
+                        href={college.website}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{
+                          padding: "0.4rem 0.8rem",
+                          background: "white",
+                          border: "1.5px solid #e2e8f0",
+                          borderRadius: "0.5rem",
+                          fontSize: "0.8rem",
+                          color: "#667eea",
+                          fontWeight: 600,
+                          textDecoration: "none",
+                          textAlign: "center",
+                        }}
+                      >
+                        Apply ↗
+                      </a>
+                    )}
+                    <button
+                      onClick={() => openEdit(college)}
+                      style={{
+                        padding: "0.4rem 0.8rem",
+                        background: "white",
+                        border: "1.5px solid #e2e8f0",
+                        borderRadius: "0.5rem",
+                        fontSize: "0.8rem",
+                        color: "#475569",
+                        fontWeight: 600,
+                        cursor: "pointer",
+                      }}
+                    >
+                      ✏️ Edit
+                    </button>
+                    <button
+                      onClick={() => handleDelete(college.id)}
+                      style={{
+                        padding: "0.4rem 0.8rem",
+                        background: "white",
+                        border: "1.5px solid #fecaca",
+                        borderRadius: "0.5rem",
+                        fontSize: "0.8rem",
+                        color: "#ef4444",
+                        fontWeight: 600,
+                        cursor: "pointer",
+                      }}
+                    >
+                      🗑️ Remove
+                    </button>
                   </div>
                 </div>
               );
             })}
           </div>
+        )}
 
-          <div style={styles.onboardingFooter}>
-            <button
-              style={{
-                ...styles.btnPrimary,
-                opacity: selectedIds.size === 0 || onboardingLoading ? 0.6 : 1,
-              }}
-              disabled={selectedIds.size === 0 || onboardingLoading}
-              onClick={handleOnboardingSave}
-            >
-              {onboardingLoading
-                ? "Saving..."
-                : `Track ${selectedIds.size} School${selectedIds.size !== 1 ? "s" : ""} →`}
-            </button>
+        {/* Legend */}
+        {tracked.length > 0 && (
+          <div style={{
+            display: "flex", gap: "1.5rem", marginTop: "2rem", justifyContent: "center",
+            flexWrap: "wrap",
+          }}>
+            {[
+              { color: "#ef4444", label: "< 7 days (Urgent)" },
+              { color: "#f59e0b", label: "< 30 days (Soon)" },
+              { color: "#22c55e", label: "> 30 days (On track)" },
+              { color: "#9ca3af", label: "Past deadline" },
+            ].map((item) => (
+              <div key={item.label} style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                <div style={{ width: "0.75rem", height: "0.75rem", borderRadius: "50%", background: item.color }} />
+                <span style={{ fontSize: "0.8rem", color: "#64748b" }}>{item.label}</span>
+              </div>
+            ))}
           </div>
-        </div>
-      </div>
-    );
-  }
-
-  // ─── DASHBOARD ────────────────────────────────────────────────────
-  return (
-    <div style={styles.dashPage}>
-      {/* Header */}
-      <header style={styles.header}>
-        <div style={styles.headerLeft}>
-          <span style={styles.logoIcon}>🎓</span>
-          <span style={styles.dashLogoText}>EduTracker</span>
-        </div>
-        <div style={styles.headerRight}>
-          <span style={styles.userEmail}>{userEmail}</span>
-          <button style={styles.btnOutline} onClick={() => { setEditingSchools(true); setScreen("onboarding"); }}>
-            Edit Schools
-          </button>
-          <button style={styles.btnLogout} onClick={handleLogout}>
-            Sign Out
-          </button>
-        </div>
-      </header>
-
-      <main style={styles.dashMain}>
-        {dashboardLoading ? (
-          <div style={styles.loadingBox}>Loading your deadlines...</div>
-        ) : (
-          <>
-            {/* Stats */}
-            <div style={styles.statsRow}>
-              <div style={{ ...styles.statCard, borderLeftColor: "#f44336" }}>
-                <div style={styles.statNumber}>{urgentCount}</div>
-                <div style={styles.statLabel}>Urgent (&lt;7 days)</div>
-              </div>
-              <div style={{ ...styles.statCard, borderLeftColor: "#ff9800" }}>
-                <div style={styles.statNumber}>{pendingCount}</div>
-                <div style={styles.statLabel}>Pending Deadlines</div>
-              </div>
-              <div style={{ ...styles.statCard, borderLeftColor: "#4caf50" }}>
-                <div style={styles.statNumber}>{completedCount}</div>
-                <div style={styles.statLabel}>Completed</div>
-              </div>
-              <div style={{ ...styles.statCard, borderLeftColor: "#1565c0" }}>
-                <div style={styles.statNumber}>{selectedIds.size}</div>
-                <div style={styles.statLabel}>Schools Tracked</div>
-              </div>
-            </div>
-
-            {/* Filters */}
-            <div style={styles.filtersRow}>
-              <div style={styles.filterGroup}>
-                <span style={styles.filterLabel}>Type:</span>
-                {["All", "ED", "ED2", "EA", "RD", "Scholarship"].map((t) => (
-                  <button
-                    key={t}
-                    style={{
-                      ...styles.filterBtn,
-                      ...(filterType === t ? styles.filterBtnActive : {}),
-                    }}
-                    onClick={() => setFilterType(t)}
-                  >
-                    {t}
-                  </button>
-                ))}
-              </div>
-              <div style={styles.filterGroup}>
-                <span style={styles.filterLabel}>Status:</span>
-                {["All", "Upcoming", "Pending", "Completed", "Passed"].map((s) => (
-                  <button
-                    key={s}
-                    style={{
-                      ...styles.filterBtn,
-                      ...(filterStatus === s ? styles.filterBtnActive : {}),
-                    }}
-                    onClick={() => setFilterStatus(s)}
-                  >
-                    {s}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Deadline list */}
-            {filteredRows.length === 0 ? (
-              <div style={styles.emptyBox}>
-                No deadlines match your filters.
-              </div>
-            ) : (
-              <div style={styles.deadlineList}>
-                {filteredRows.map((row, idx) => {
-                  const color = urgencyColor(row.daysLeft, row.completed);
-                  const bg = urgencyBg(row.daysLeft, row.completed);
-                  const countdown = getCountdown(row.deadline.date);
-                  const isPassed = row.daysLeft < 0 && !row.completed;
-
-                  return (
-                    <div
-                      key={`${row.college.id}-${row.deadline.type}-${row.deadline.date}-${idx}`}
-                      style={{
-                        ...styles.deadlineCard,
-                        backgroundColor: bg,
-                        borderLeftColor: color,
-                        opacity: isPassed ? 0.65 : 1,
-                      }}
-                    >
-                      <div style={styles.deadlineCardLeft}>
-                        <div style={styles.deadlineCardTop}>
-                          <span
-                            style={{
-                              ...styles.typeBadge,
-                              backgroundColor: deadlineTypeColor(row.deadline.type),
-                            }}
-                          >
-                            {row.deadline.type}
-                          </span>
-                          <span style={styles.schoolName}>{row.college.name}</span>
-                          <span style={styles.schoolLocation}>— {row.college.location}</span>
-                        </div>
-                        <div style={styles.deadlineLabel}>{row.deadline.label}</div>
-                        <div style={styles.deadlineDate}>
-                          📅 {new Date(row.deadline.date + "T00:00:00").toLocaleDateString("en-US", {
-                            weekday: "short",
-                            month: "long",
-                            day: "numeric",
-                            year: "numeric",
-                          })}
-                        </div>
-                      </div>
-
-                      <div style={styles.deadlineCardRight}>
-                        <div style={{ ...styles.countdownBadge, backgroundColor: color }}>
-                          {row.completed ? (
-                            <span>✓ Done</span>
-                          ) : isPassed ? (
-                            <span>Passed</span>
-                          ) : (
-                            <>
-                              <div style={styles.countdownNum}>{urgencyLabel(row.daysLeft, row.completed)}</div>
-                              {countdown && (
-                                <div style={styles.countdownSub}>{countdown}</div>
-                              )}
-                            </>
-                          )}
-                        </div>
-                        <button
-                          style={{
-                            ...styles.completeBtn,
-                            backgroundColor: row.completed ? "#e0e0e0" : "#fff",
-                            color: row.completed ? "#555" : "#1565c0",
-                            borderColor: row.completed ? "#bbb" : "#1565c0",
-                          }}
-                          onClick={() => handleToggleComplete(row)}
-                        >
-                          {row.completed ? "↩ Undo" : "✓ Mark Done"}
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </>
         )}
       </main>
+
+      {/* Add/Edit Modal */}
+      {showAddModal && (
+        <div
+          style={{
+            position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            padding: "1rem", zIndex: 1000, backdropFilter: "blur(4px)",
+          }}
+          onClick={(e) => { if (e.target === e.currentTarget) { setShowAddModal(false); resetModal(); } }}
+        >
+          <div style={{
+            background: "white",
+            borderRadius: "1.5rem",
+            padding: "2rem",
+            maxWidth: "500px",
+            width: "100%",
+            boxShadow: "0 25px 50px rgba(0,0,0,0.25)",
+            maxHeight: "90vh",
+            overflowY: "auto",
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.5rem" }}>
+              <h2 style={{ margin: 0, color: "#1e293b", fontSize: "1.3rem", fontWeight: 800 }}>
+                {editingId ? "Edit College" : "Add College"}
+              </h2>
+              <button
+                onClick={() => { setShowAddModal(false); resetModal(); }}
+                style={{ background: "none", border: "none", fontSize: "1.5rem", cursor: "pointer", color: "#94a3b8" }}
+              >
+                ×
+              </button>
+            </div>
+
+            <CollegeForm
+              searchQuery={searchQuery}
+              setSearchQuery={setSearchQuery}
+              filteredSearch={filteredSearch}
+              selectedCollege={selectedCollege}
+              setSelectedCollege={setSelectedCollege}
+              manualName={manualName}
+              setManualName={setManualName}
+              manualLocation={manualLocation}
+              setManualLocation={setManualLocation}
+              manualWebsite={manualWebsite}
+              setManualWebsite={setManualWebsite}
+              selectedAppType={selectedAppType}
+              setSelectedAppType={setSelectedAppType}
+              customDeadlineInput={customDeadlineInput}
+              setCustomDeadlineInput={setCustomDeadlineInput}
+              useCustomDeadline={useCustomDeadline}
+              setUseCustomDeadline={setUseCustomDeadline}
+              isManualEntry={isManualEntry}
+              setIsManualEntry={setIsManualEntry}
+              searchFocused={searchFocused}
+              setSearchFocused={setSearchFocused}
+              autoDeadline={autoDeadline}
+            />
+
+            <div style={{ display: "flex", gap: "0.75rem", marginTop: "1.5rem" }}>
+              <button
+                onClick={() => { setShowAddModal(false); resetModal(); }}
+                style={{
+                  flex: 1,
+                  background: "white",
+                  border: "2px solid #e2e8f0",
+                  color: "#64748b",
+                  borderRadius: "0.75rem",
+                  padding: "0.875rem",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={editingId ? handleSaveEdit : handleAddCollege}
+                style={{
+                  flex: 2,
+                  background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+                  color: "white",
+                  border: "none",
+                  borderRadius: "0.75rem",
+                  padding: "0.875rem",
+                  fontWeight: 700,
+                  fontSize: "1rem",
+                  cursor: "pointer",
+                }}
+              >
+                {editingId ? "Save Changes" : "Add to Tracker"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-// ─── STYLES ───────────────────────────────────────────────────────────────────
+// ===== COLLEGE FORM COMPONENT =====
+interface CollegeFormProps {
+  searchQuery: string;
+  setSearchQuery: (v: string) => void;
+  filteredSearch: College[];
+  selectedCollege: College | null;
+  setSelectedCollege: (c: College | null) => void;
+  manualName: string;
+  setManualName: (v: string) => void;
+  manualLocation: string;
+  setManualLocation: (v: string) => void;
+  manualWebsite: string;
+  setManualWebsite: (v: string) => void;
+  selectedAppType: AppType;
+  setSelectedAppType: (v: AppType) => void;
+  customDeadlineInput: string;
+  setCustomDeadlineInput: (v: string) => void;
+  useCustomDeadline: boolean;
+  setUseCustomDeadline: (v: boolean) => void;
+  isManualEntry: boolean;
+  setIsManualEntry: (v: boolean) => void;
+  searchFocused: boolean;
+  setSearchFocused: (v: boolean) => void;
+  autoDeadline: string | null | undefined;
+}
 
-const styles: Record<string, React.CSSProperties> = {
-  page: {
-    minHeight: "100vh",
-    background: "linear-gradient(135deg, #1a237e 0%, #283593 40%, #3949ab 100%)",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: "24px 16px",
-    fontFamily: "'Segoe UI', system-ui, sans-serif",
-  },
-  authCard: {
-    background: "#fff",
-    borderRadius: "16px",
-    padding: "40px",
+function CollegeForm({
+  searchQuery, setSearchQuery,
+  filteredSearch,
+  selectedCollege, setSelectedCollege,
+  manualName, setManualName,
+  manualLocation, setManualLocation,
+  manualWebsite, setManualWebsite,
+  selectedAppType, setSelectedAppType,
+  customDeadlineInput, setCustomDeadlineInput,
+  useCustomDeadline, setUseCustomDeadline,
+  isManualEntry, setIsManualEntry,
+  searchFocused, setSearchFocused,
+  autoDeadline,
+}: CollegeFormProps) {
+  const inputStyle = {
     width: "100%",
-    maxWidth: "420px",
-    boxShadow: "0 20px 60px rgba(0,0,0,0.3)",
-  },
-  logo: {
-    display: "flex",
-    alignItems: "center",
-    gap: "10px",
-    marginBottom: "8px",
-  },
-  logoIcon: {
-    fontSize: "32px",
-  },
-  logoText: {
-    fontSize: "26px",
-    fontWeight: 700,
-    color: "#1a237e",
-    margin: 0,
-  },
-  tagline: {
-    color: "#555",
-    fontSize: "14px",
-    marginBottom: "28px",
-    marginTop: "4px",
-  },
-  authTabs: {
-    display: "flex",
-    borderRadius: "8px",
-    overflow: "hidden",
-    border: "1px solid #e0e0e0",
-    marginBottom: "24px",
-  },
-  authTab: {
-    flex: 1,
-    padding: "10px",
-    border: "none",
-    background: "#f5f5f5",
-    cursor: "pointer",
-    fontSize: "14px",
-    fontWeight: 500,
-    color: "#555",
-    transition: "all 0.2s",
-  },
-  authTabActive: {
-    background: "#1a237e",
-    color: "#fff",
-  },
-  form: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "12px",
-  },
-  label: {
-    fontSize: "13px",
-    fontWeight: 600,
-    color: "#333",
-    marginBottom: "-6px",
-  },
-  input: {
-    padding: "11px 14px",
-    borderRadius: "8px",
-    border: "1.5px solid #e0e0e0",
-    fontSize: "15px",
+    padding: "0.75rem 1rem",
+    border: "2px solid #e2e8f0",
+    borderRadius: "0.75rem",
+    fontSize: "0.95rem",
     outline: "none",
+    boxSizing: "border-box" as const,
+    fontFamily: "inherit",
     transition: "border-color 0.2s",
-  },
-  errorBox: {
-    background: "#ffebee",
-    color: "#c62828",
-    padding: "10px 14px",
-    borderRadius: "8px",
-    fontSize: "13px",
-    border: "1px solid #ef9a9a",
-  },
-  btnPrimary: {
-    padding: "13px",
-    background: "linear-gradient(135deg, #1a237e, #3949ab)",
-    color: "#fff",
-    border: "none",
-    borderRadius: "8px",
-    fontSize: "15px",
+    color: "#1e293b",
+  };
+
+  const labelStyle = {
+    display: "block",
     fontWeight: 600,
-    cursor: "pointer",
-    marginTop: "4px",
-    transition: "opacity 0.2s",
-  },
-  btnOutline: {
-    padding: "8px 16px",
-    background: "transparent",
-    color: "#1a237e",
-    border: "1.5px solid #1a237e",
-    borderRadius: "8px",
-    fontSize: "13px",
-    fontWeight: 600,
-    cursor: "pointer",
-  },
-  btnLogout: {
-    padding: "8px 16px",
-    background: "transparent",
-    color: "#c62828",
-    border: "1.5px solid #c62828",
-    borderRadius: "8px",
-    fontSize: "13px",
-    fontWeight: 600,
-    cursor: "pointer",
-  },
-  demoNote: {
-    marginTop: "20px",
-    fontSize: "12px",
-    color: "#888",
-    textAlign: "center",
-    background: "#f9f9f9",
-    padding: "10px",
-    borderRadius: "8px",
-  },
-  // Onboarding
-  onboardingCard: {
-    background: "#fff",
-    borderRadius: "16px",
-    padding: "32px",
-    width: "100%",
-    maxWidth: "960px",
-    boxShadow: "0 20px 60px rgba(0,0,0,0.3)",
-    maxHeight: "90vh",
-    display: "flex",
-    flexDirection: "column",
-  },
-  onboardingHeader: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: "16px",
-  },
-  onboardingTitle: {
-    fontSize: "22px",
-    fontWeight: 700,
-    color: "#1a237e",
-    margin: "0 0 6px",
-  },
-  onboardingSubtitle: {
-    fontSize: "14px",
-    color: "#666",
-    marginBottom: "20px",
-  },
-  searchRow: {
-    display: "flex",
-    alignItems: "center",
-    gap: "16px",
-    marginBottom: "16px",
-  },
-  searchInput: {
-    flex: 1,
-    padding: "10px 14px",
-    borderRadius: "8px",
-    border: "1.5px solid #e0e0e0",
-    fontSize: "15px",
-    outline: "none",
-  },
-  selectedCount: {
-    fontSize: "14px",
-    fontWeight: 600,
-    color: "#1a237e",
-    whiteSpace: "nowrap",
-  },
-  collegeGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
-    gap: "12px",
-    overflowY: "auto",
-    flex: 1,
-    paddingBottom: "8px",
-  },
-  collegeCard: {
-    border: "2px solid #e0e0e0",
-    borderRadius: "10px",
-    padding: "14px",
-    cursor: "pointer",
-    transition: "all 0.15s",
-    background: "#fafafa",
-    position: "relative",
-    userSelect: "none",
-  },
-  collegeCardSelected: {
-    border: "2px solid #1a237e",
-    background: "#e8eaf6",
-  },
-  collegeCardCheck: {
-    position: "absolute",
-    top: "10px",
-    right: "10px",
-    width: "20px",
-    height: "20px",
-    borderRadius: "50%",
-    background: "#1a237e",
-    color: "#fff",
-    fontSize: "12px",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    fontWeight: 700,
-  },
-  collegeName: {
-    fontSize: "13px",
-    fontWeight: 700,
-    color: "#1a237e",
-    marginBottom: "4px",
-    paddingRight: "24px",
-    lineHeight: 1.3,
-  },
-  collegeLocation: {
-    fontSize: "11px",
-    color: "#888",
-    marginBottom: "8px",
-  },
-  collegeDeadlines: {
-    display: "flex",
-    flexWrap: "wrap",
-    gap: "4px",
-  },
-  deadlineBadge: {
-    fontSize: "10px",
-    color: "#fff",
-    padding: "2px 6px",
-    borderRadius: "4px",
-    fontWeight: 600,
-  },
-  onboardingFooter: {
-    paddingTop: "20px",
-    borderTop: "1px solid #eee",
-    display: "flex",
-    justifyContent: "center",
-  },
-  // Dashboard
-  dashPage: {
-    minHeight: "100vh",
-    background: "#f0f2f5",
-    fontFamily: "'Segoe UI', system-ui, sans-serif",
-  },
-  header: {
-    background: "linear-gradient(135deg, #1a237e, #3949ab)",
-    color: "#fff",
-    padding: "14px 32px",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    boxShadow: "0 2px 8px rgba(0,0,0,0.2)",
-    flexWrap: "wrap",
-    gap: "12px",
-  },
-  headerLeft: {
-    display: "flex",
-    alignItems: "center",
-    gap: "10px",
-  },
-  dashLogoText: {
-    fontSize: "20px",
-    fontWeight: 700,
-    letterSpacing: "-0.3px",
-  },
-  headerRight: {
-    display: "flex",
-    alignItems: "center",
-    gap: "12px",
-    flexWrap: "wrap",
-  },
-  userEmail: {
-    fontSize: "13px",
-    opacity: 0.85,
-  },
-  dashMain: {
-    maxWidth: "1100px",
-    margin: "0 auto",
-    padding: "28px 20px",
-  },
-  loadingBox: {
-    textAlign: "center",
-    padding: "60px",
-    color: "#888",
-    fontSize: "16px",
-  },
-  statsRow: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-    gap: "16px",
-    marginBottom: "24px",
-  },
-  statCard: {
-    background: "#fff",
-    borderRadius: "12px",
-    padding: "20px 24px",
-    borderLeft: "4px solid #ccc",
-    boxShadow: "0 1px 4px rgba(0,0,0,0.08)",
-  },
-  statNumber: {
-    fontSize: "36px",
-    fontWeight: 700,
-    color: "#222",
-    lineHeight: 1,
-  },
-  statLabel: {
-    fontSize: "13px",
-    color: "#666",
-    marginTop: "4px",
-  },
-  filtersRow: {
-    background: "#fff",
-    borderRadius: "12px",
-    padding: "16px 20px",
-    marginBottom: "20px",
-    boxShadow: "0 1px 4px rgba(0,0,0,0.08)",
-    display: "flex",
-    flexWrap: "wrap",
-    gap: "16px",
-  },
-  filterGroup: {
-    display: "flex",
-    alignItems: "center",
-    gap: "8px",
-    flexWrap: "wrap",
-  },
-  filterLabel: {
-    fontSize: "13px",
-    fontWeight: 600,
-    color: "#555",
-  },
-  filterBtn: {
-    padding: "5px 12px",
-    borderRadius: "20px",
-    border: "1.5px solid #ddd",
-    background: "#f5f5f5",
-    fontSize: "12px",
-    fontWeight: 500,
-    cursor: "pointer",
-    color: "#555",
-    transition: "all 0.15s",
-  },
-  filterBtnActive: {
-    background: "#1a237e",
-    color: "#fff",
-    borderColor: "#1a237e",
-  },
-  deadlineList: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "12px",
-  },
-  deadlineCard: {
-    borderRadius: "12px",
-    borderLeft: "5px solid #ccc",
-    padding: "18px 20px",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    boxShadow: "0 1px 4px rgba(0,0,0,0.06)",
-    gap: "16px",
-    flexWrap: "wrap",
-    transition: "opacity 0.2s",
-  },
-  deadlineCardLeft: {
-    flex: 1,
-    minWidth: "200px",
-  },
-  deadlineCardTop: {
-    display: "flex",
-    alignItems: "center",
-    gap: "8px",
-    flexWrap: "wrap",
-    marginBottom: "6px",
-  },
-  typeBadge: {
-    fontSize: "11px",
-    color: "#fff",
-    padding: "3px 8px",
-    borderRadius: "5px",
-    fontWeight: 700,
-    letterSpacing: "0.5px",
-  },
-  schoolName: {
-    fontSize: "16px",
-    fontWeight: 700,
-    color: "#1a237e",
-  },
-  schoolLocation: {
-    fontSize: "12px",
-    color: "#888",
-  },
-  deadlineLabel: {
-    fontSize: "13px",
-    color: "#555",
-    marginBottom: "4px",
-  },
-  deadlineDate: {
-    fontSize: "13px",
-    color: "#444",
-    fontWeight: 500,
-  },
-  deadlineCardRight: {
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    gap: "10px",
-    minWidth: "110px",
-  },
-  countdownBadge: {
-    borderRadius: "10px",
-    padding: "8px 14px",
-    color: "#fff",
-    textAlign: "center",
-    minWidth: "90px",
-  },
-  countdownNum: {
-    fontSize: "18px",
-    fontWeight: 700,
-    lineHeight: 1.2,
-  },
-  countdownSub: {
-    fontSize: "11px",
-    opacity: 0.85,
-    marginTop: "2px",
-  },
-  completeBtn: {
-    padding: "7px 14px",
-    borderRadius: "8px",
-    border: "1.5px solid",
-    fontSize: "12px",
-    fontWeight: 600,
-    cursor: "pointer",
-    transition: "all 0.15s",
-    whiteSpace: "nowrap",
-  },
-  emptyBox: {
-    textAlign: "center",
-    padding: "60px",
-    color: "#aaa",
-    fontSize: "16px",
-    background: "#fff",
-    borderRadius: "12px",
-  },
-};
+    color: "#374151",
+    marginBottom: "0.4rem",
+    fontSize: "0.9rem",
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column" as const, gap: "1rem" }}>
+      {/* Toggle */}
+      <div style={{ display: "flex", background: "#f1f5f9", borderRadius: "0.75rem", padding: "0.25rem" }}>
+        <button
+          onClick={() => setIsManualEntry(false)}
+          style={{
+            flex: 1,
+            padding: "0.5rem",
+            border: "none",
+            borderRadius: "0.5rem",
+            background: !isManualEntry ? "white" : "transparent",
+            color: !isManualEntry ? "#667eea" : "#94a3b8",
+            fontWeight: 700,
+            cursor: "pointer",
+            fontSize: "0.85rem",
+            boxShadow: !isManualEntry ? "0 1px 4px rgba(0,0,0,0.1)" : "none",
+            transition: "all 0.2s",
+          }}
+        >
+          🔍 Search Database
+        </button>
+        <button
+          onClick={() => setIsManualEntry(true)}
+          style={{
+            flex: 1,
+            padding: "0.5rem",
+            border: "none",
+            borderRadius: "0.5rem",
+            background: isManualEntry ? "white" : "transparent",
+            color: isManualEntry ? "#667eea" : "#94a3b8",
+            fontWeight: 700,
+            cursor: "pointer",
+            fontSize: "0.85rem",
+            boxShadow: isManualEntry ? "0 1px 4px rgba(0,0,0,0.1)" : "none",
+            transition: "all 0.2s",
+          }}
+        >
+          ✏️ Manual Entry
+        </button>
+      </div>
+
+      {!isManualEntry ? (
+        <div style={{ position: "relative" }}>
+          <label style={labelStyle}>Search for a College</label>
+          {selectedCollege ? (
+            <div style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              padding: "0.75rem 1rem",
+              background: "#f0fdf4",
+              border: "2px solid #bbf7d0",
+              borderRadius: "0.75rem",
+            }}>
+              <div>
+                <div style={{ fontWeight: 700, color: "#1e293b" }}>{selectedCollege.name}</div>
+                <div style={{ fontSize: "0.8rem", color: "#64748b" }}>{selectedCollege.location}</div>
+              </div>
+              <button
+                onClick={() => { setSelectedCollege(null); setSearchQuery(""); }}
+                style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: "1.1rem" }}
+              >
+                ×
+              </button>
+            </div>
+          ) : (
+            <>
+              <input
+                style={inputStyle}
+                type="text"
+                placeholder="Type college name…"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onFocus={() => setSearchFocused(true)}
+                onBlur={() => setTimeout(() => setSearchFocused(false), 200)}
+              />
+              {searchFocused && filteredSearch.length > 0 && (
+                <div style={{
+                  position: "absolute",
+                  top: "100%",
+                  left: 0,
+                  right: 0,
+                  background: "white",
+                  border: "2px solid #e2e8f0",
+                  borderRadius: "0.75rem",
+                  boxShadow: "0 10px 25px rgba(0,0,0,0.15)",
+                  zIndex: 100,
+                  maxHeight: "220px",
+                  overflowY: "auto",
+                  marginTop: "0.25rem",
+                }}>
+                  {filteredSearch.map((c) => (
+                    <button
+                      key={c.id}
+                      onClick={() => {
+                        setSelectedCollege(c);
+                        setSearchQuery("");
+                        setSearchFocused(false);
+                      }}
+                      style={{
+                        display: "block",
+                        width: "100%",
+                        textAlign: "left",
+                        padding: "0.75rem 1rem",
+                        border: "none",
+                        background: "none",
+                        cursor: "pointer",
+                        borderBottom: "1px solid #f1f5f9",
+                        fontFamily: "inherit",
+                      }}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = "#f8fafc")}
+                      onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
+                    >
+                      <div style={{ fontWeight: 600, color: "#1e293b", fontSize: "0.9rem" }}>{c.name}</div>
+                      <div style={{ fontSize: "0.78rem", color: "#94a3b8" }}>{c.location}</div>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {searchQuery.length > 0 && filteredSearch.length === 0 && (
+                <p style={{ fontSize: "0.8rem", color: "#94a3b8", margin: "0.35rem 0 0" }}>
+                  No results — try Manual Entry to add this college.
+                </p>
+              )}
+            </>
+          )}
+        </div>
+      ) : (
+        <>
+          <div>
+            <label style={labelStyle}>College Name *</label>
+            <input
+              style={inputStyle}
+              type="text"
+              placeholder="e.g., University of Dreams"
+              value={manualName}
+              onChange={(e) => setManualName(e.target.value)}
+            />
+          </div>
+          <div>
+            <label style={labelStyle}>Location</label>
+            <input
+              style={inputStyle}
+              type="text"
+              placeholder="e.g., Boston, MA"
+              value={manualLocation}
+              onChange={(e) => setManualLocation(e.target.value)}
+            />
+          </div>
+          <div>
+            <label style={labelStyle}>Application Website</label>
+            <input
+              style={inputStyle}
+              type="url"
+              placeholder="https://apply.college.edu"
+              value={manualWebsite}
+              onChange={(e) => setManualWebsite(e.target.value)}
+            />
+          </div>
+        </>
+      )}
+
+      {/* Application Type */}
+      <div>
+        <label style={labelStyle}>Application Type</label>
+        <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap" as const }}>
+          {APP_TYPES.map((type) => (
+            <button
+              key={type}
+              onClick={() => setSelectedAppType(type)}
+              style={{
+                padding: "0.45rem 0.9rem",
+                border: "2px solid",
+                borderColor: selectedAppType === type ? "#667eea" : "#e2e8f0",
+                background: selectedAppType === type ? "#667eea" : "white",
+                color: selectedAppType === type ? "white" : "#64748b",
+                borderRadius: "0.5rem",
+                fontWeight: 600,
+                fontSize: "0.85rem",
+                cursor: "pointer",
+                transition: "all 0.15s",
+              }}
+            >
+              {type}
+            </button>
+          ))}
+        </div>
+        <p style={{ fontSize: "0.78rem", color: "#94a3b8", margin: "0.35rem 0 0" }}>
+          {APP_TYPE_LABELS[selectedAppType]}
+        </p>
+      </div>
+
+      {/* Deadline */}
+      <div>
+        <label style={labelStyle}>Deadline</label>
+        {!isManualEntry && autoDeadline && (
+          <div style={{
+            padding: "0.6rem 1rem",
+            background: "#f0fdf4",
+            border: "1.5px solid #bbf7d0",
+            borderRadius: "0.6rem",
+            marginBottom: "0.5rem",
+            fontSize: "0.85rem",
+            color: "#166534",
+            fontWeight: 600,
+          }}>
+            ✅ Auto-populated: {formatDeadline(autoDeadline)}
+          </div>
+        )}
+        {!isManualEntry && !autoDeadline && selectedCollege && (
+          <div style={{
+            padding: "0.6rem 1rem",
+            background: "#fffbeb",
+            border: "1.5px solid #fde68a",
+            borderRadius: "0.6rem",
+            marginBottom: "0.5rem",
+            fontSize: "0.85rem",
+            color: "#92400e",
+          }}>
+            ⚠️ No {selectedAppType} deadline in our database. Please enter one below.
+          </div>
+        )}
+        {(isManualEntry || !autoDeadline || useCustomDeadline) ? (
+          <input
+            style={inputStyle}
+            type="date"
+            value={customDeadlineInput}
+            onChange={(e) => setCustomDeadlineInput(e.target.value)}
+          />
+        ) : (
+          <div>
+            <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", cursor: "pointer", fontSize: "0.85rem", color: "#64748b" }}>
+              <input
+                type="checkbox"
+                checked={useCustomDeadline}
+                onChange={(e) => setUseCustomDeadline(e.target.checked)}
+              />
+              Override with custom date
+            </label>
+            {useCustomDeadline && (
+              <input
+                style={{ ...inputStyle, marginTop: "0.5rem" }}
+                type="date"
+                value={customDeadlineInput}
+                onChange={(e) => setCustomDeadlineInput(e.target.value)}
+              />
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
