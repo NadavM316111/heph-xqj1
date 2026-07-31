@@ -1,51 +1,55 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { SCHOOLS, School } from "@/lib/schools";
+
+interface School {
+  id: string;
+  name: string;
+  location: string;
+  state: string;
+  type: "public" | "private";
+  earlyActionDeadline?: string;
+  earlyDecisionDeadline?: string;
+  regularDecisionDeadline?: string;
+  website: string;
+  acceptanceRate?: number;
+}
 
 interface Application {
-  id: number;
-  user_email: string;
-  school_id: string;
-  school_name: string;
-  deadline_type: string;
-  deadline_date: string;
+  id: string;
+  schoolId: string;
+  schoolName: string;
+  schoolLocation: string;
+  deadlineType: "EA" | "ED" | "RD";
+  deadlineDate: string; // YYYY-MM-DD
+  status: "planning" | "in-progress" | "submitted" | "accepted" | "rejected" | "waitlisted";
   notes: string;
-  status: string;
-  created_at: string;
+  reminderSent?: boolean;
 }
 
-interface Alert {
-  id: number;
-  school_name: string;
-  deadline_type: string;
-  deadline_date: string;
-  daysUntil: number;
-  status: string;
-}
+const STATUS_COLORS: Record<Application["status"], string> = {
+  planning: "#94a3b8",
+  "in-progress": "#3b82f6",
+  submitted: "#8b5cf6",
+  accepted: "#22c55e",
+  rejected: "#ef4444",
+  waitlisted: "#f59e0b",
+};
 
-type Tab = "dashboard" | "schools" | "alerts";
-type AuthMode = "login" | "signup";
-
-const STATUS_OPTIONS = ["not_started", "in_progress", "submitted"] as const;
-const STATUS_LABELS: Record<string, string> = {
-  not_started: "Not Started",
-  in_progress: "In Progress",
+const STATUS_LABELS: Record<Application["status"], string> = {
+  planning: "Planning",
+  "in-progress": "In Progress",
   submitted: "Submitted",
-};
-const STATUS_COLORS: Record<string, string> = {
-  not_started: "#e74c3c",
-  in_progress: "#f39c12",
-  submitted: "#27ae60",
+  accepted: "Accepted",
+  rejected: "Rejected",
+  waitlisted: "Waitlisted",
 };
 
-function daysUntilClient(dateStr: string): number {
+function daysUntil(dateStr: string): number {
   const now = new Date();
   now.setHours(0, 0, 0, 0);
-  const target = new Date(dateStr + "T00:00:00");
-  target.setHours(0, 0, 0, 0);
-  const diff = target.getTime() - now.getTime();
-  return Math.ceil(diff / (1000 * 60 * 60 * 24));
+  const d = new Date(dateStr + "T00:00:00");
+  return Math.ceil((d.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
 }
 
 function formatDate(dateStr: string): string {
@@ -53,33 +57,36 @@ function formatDate(dateStr: string): string {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
+function urgencyColor(days: number): string {
+  if (days < 0) return "#6b7280";
+  if (days <= 7) return "#ef4444";
+  if (days <= 30) return "#f59e0b";
+  return "#22c55e";
+}
+
 export default function Home() {
-  const [email, setEmail] = useState<string>("");
-  const [authMode, setAuthMode] = useState<AuthMode>("login");
+  const [view, setView] = useState<"dashboard" | "add" | "detail">("dashboard");
+  const [applications, setApplications] = useState<Application[]>([]);
+  const [schools, setSchools] = useState<School[]>([]);
+  const [schoolSearch, setSchoolSearch] = useState("");
+  const [filteredSchools, setFilteredSchools] = useState<School[]>([]);
+  const [selectedSchool, setSelectedSchool] = useState<School | null>(null);
+  const [selectedApp, setSelectedApp] = useState<Application | null>(null);
+  const [deadlineType, setDeadlineType] = useState<"EA" | "ED" | "RD">("RD");
+  const [customDate, setCustomDate] = useState("");
+  const [notes, setNotes] = useState("");
+  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [sortBy, setSortBy] = useState<"deadline" | "name">("deadline");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [loadingSchools, setLoadingSchools] = useState(false);
+  const [email, setEmail] = useState("");
+  const [authView, setAuthView] = useState<"none" | "login" | "signup">("none");
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
   const [authError, setAuthError] = useState("");
-  const [authLoading, setAuthLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
 
-  const [tab, setTab] = useState<Tab>("dashboard");
-  const [applications, setApplications] = useState<Application[]>([]);
-  const [alerts, setAlerts] = useState<Alert[]>([]);
-  const [schoolSearch, setSchoolSearch] = useState("");
-  const [loadingApps, setLoadingApps] = useState(false);
-
-  // Add school modal
-  const [addingSchool, setAddingSchool] = useState<School | null>(null);
-  const [addDeadlineType, setAddDeadlineType] = useState("regularDecision");
-  const [addNotes, setAddNotes] = useState("");
-  const [addStatus, setAddStatus] = useState("not_started");
-  const [addLoading, setAddLoading] = useState(false);
-
-  // Edit modal
-  const [editingApp, setEditingApp] = useState<Application | null>(null);
-  const [editNotes, setEditNotes] = useState("");
-  const [editStatus, setEditStatus] = useState("not_started");
-  const [editLoading, setEditLoading] = useState(false);
-
+  // Track page view
   useEffect(() => {
     fetch("/api/track", {
       method: "POST",
@@ -88,70 +95,163 @@ export default function Home() {
     }).catch(() => {});
   }, []);
 
+  // Check auth on load
   useEffect(() => {
     fetch("/api/auth")
       .then((r) => r.json())
-      .then((d) => setEmail(d.email ?? ""))
+      .then((d) => {
+        if (d.email) setEmail(d.email);
+      })
       .catch(() => {});
   }, []);
 
-  const loadApplications = useCallback(async () => {
-    if (!email) return;
-    setLoadingApps(true);
-    try {
-      const res = await fetch("/api/applications");
-      const data = await res.json();
-      if (data.applications) setApplications(data.applications);
-    } catch {
-      // ignore
-    } finally {
-      setLoadingApps(false);
-    }
-  }, [email]);
-
-  const loadAlerts = useCallback(async () => {
-    if (!email) return;
-    try {
-      const res = await fetch("/api/alerts");
-      const data = await res.json();
-      if (data.alerts) setAlerts(data.alerts);
-    } catch {
-      // ignore
-    }
-  }, [email]);
-
+  // Load applications from localStorage
   useEffect(() => {
-    if (email) {
-      loadApplications();
-      loadAlerts();
-    } else {
-      setApplications([]);
-      setAlerts([]);
-    }
-  }, [email, loadApplications, loadAlerts]);
-
-  async function handleAuth(e: React.FormEvent) {
-    e.preventDefault();
-    setAuthError("");
-    setAuthLoading(true);
     try {
-      const res = await fetch("/api/auth", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: authMode, email: authEmail, password: authPassword }),
-      });
-      const data = await res.json();
-      if (data.error) {
-        setAuthError(data.error);
-      } else {
-        setEmail(data.email);
-        setAuthEmail("");
-        setAuthPassword("");
-      }
-    } catch {
-      setAuthError("Something went wrong. Please try again.");
-    } finally {
-      setAuthLoading(false);
+      const saved = localStorage.getItem("edutracker_apps");
+      if (saved) setApplications(JSON.parse(saved));
+    } catch {}
+  }, []);
+
+  // Save applications to localStorage
+  const saveApplications = useCallback((apps: Application[]) => {
+    setApplications(apps);
+    try {
+      localStorage.setItem("edutracker_apps", JSON.stringify(apps));
+    } catch {}
+  }, []);
+
+  // Load all schools on mount
+  useEffect(() => {
+    setLoadingSchools(true);
+    fetch("/api/schools")
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.schools) setSchools(d.schools);
+      })
+      .finally(() => setLoadingSchools(false));
+  }, []);
+
+  // Search schools
+  useEffect(() => {
+    if (!schoolSearch.trim()) {
+      setFilteredSchools(schools.slice(0, 20));
+      return;
+    }
+    const q = schoolSearch.toLowerCase();
+    setFilteredSchools(
+      schools
+        .filter(
+          (s) =>
+            s.name.toLowerCase().includes(q) ||
+            s.location.toLowerCase().includes(q) ||
+            s.state.toLowerCase().includes(q)
+        )
+        .slice(0, 30)
+    );
+  }, [schoolSearch, schools]);
+
+  function getDeadlineDate(school: School, type: "EA" | "ED" | "RD"): string {
+    const year = new Date().getFullYear();
+    const fallYear = new Date().getMonth() >= 6 ? year : year - 1;
+    const appYear = fallYear + 1;
+
+    let mmdd: string | undefined;
+    if (type === "EA") mmdd = school.earlyActionDeadline;
+    else if (type === "ED") mmdd = school.earlyDecisionDeadline;
+    else mmdd = school.regularDecisionDeadline;
+
+    if (!mmdd) return "";
+    const [mm, dd] = mmdd.split("-");
+    // If month is Jan-Mar, it's in the spring of the application year
+    const yr = parseInt(mm) <= 3 ? appYear : fallYear;
+    return `${yr}-${mm}-${dd}`;
+  }
+
+  function handleSelectSchool(school: School) {
+    setSelectedSchool(school);
+    setSearchOpen(false);
+    setSchoolSearch("");
+
+    // Auto-set deadline type and date
+    const hasEA = !!school.earlyActionDeadline;
+    const hasED = !!school.earlyDecisionDeadline;
+    const hasRD = !!school.regularDecisionDeadline;
+
+    const type = hasRD ? "RD" : hasEA ? "EA" : hasED ? "ED" : "RD";
+    setDeadlineType(type as "EA" | "ED" | "RD");
+    setCustomDate(getDeadlineDate(school, type as "EA" | "ED" | "RD"));
+  }
+
+  function handleDeadlineTypeChange(type: "EA" | "ED" | "RD") {
+    setDeadlineType(type);
+    if (selectedSchool) {
+      setCustomDate(getDeadlineDate(selectedSchool, type));
+    }
+  }
+
+  function handleAddApplication() {
+    if (!selectedSchool || !customDate) return;
+    setSaving(true);
+    const app: Application = {
+      id: Date.now().toString(),
+      schoolId: selectedSchool.id,
+      schoolName: selectedSchool.name,
+      schoolLocation: selectedSchool.location,
+      deadlineType,
+      deadlineDate: customDate,
+      status: "planning",
+      notes,
+    };
+    saveApplications([...applications, app]);
+    setSaving(false);
+    setView("dashboard");
+    setSelectedSchool(null);
+    setSchoolSearch("");
+    setNotes("");
+    setDeadlineType("RD");
+    setCustomDate("");
+  }
+
+  function handleUpdateStatus(id: string, status: Application["status"]) {
+    saveApplications(
+      applications.map((a) => (a.id === id ? { ...a, status } : a))
+    );
+    if (selectedApp?.id === id) {
+      setSelectedApp((prev) => (prev ? { ...prev, status } : prev));
+    }
+  }
+
+  function handleUpdateNotes(id: string, notes: string) {
+    saveApplications(
+      applications.map((a) => (a.id === id ? { ...a, notes } : a))
+    );
+    if (selectedApp?.id === id) {
+      setSelectedApp((prev) => (prev ? { ...prev, notes } : prev));
+    }
+  }
+
+  function handleDelete(id: string) {
+    saveApplications(applications.filter((a) => a.id !== id));
+    setView("dashboard");
+    setSelectedApp(null);
+  }
+
+  async function handleAuth(mode: "login" | "signup") {
+    setAuthError("");
+    const res = await fetch("/api/auth", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode, email: authEmail, password: authPassword }),
+    });
+    const d = await res.json();
+    if (d.error) {
+      setAuthError(d.error);
+    } else if (d.email) {
+      setEmail(d.email);
+      setAuthView("none");
+      setAuthEmail("");
+      setAuthPassword("");
     }
   }
 
@@ -162,838 +262,619 @@ export default function Home() {
       body: JSON.stringify({ mode: "logout" }),
     });
     setEmail("");
-    setApplications([]);
-    setAlerts([]);
   }
 
-  async function handleAddApplication() {
-    if (!addingSchool) return;
-    setAddLoading(true);
-    const deadlines = addingSchool.deadlines as Record<string, string | undefined>;
-    const deadlineDate = deadlines[addDeadlineType];
-    if (!deadlineDate) {
-      setAddLoading(false);
-      return;
-    }
-    try {
-      const res = await fetch("/api/applications", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          school_id: addingSchool.id,
-          school_name: addingSchool.name,
-          deadline_type: addDeadlineType,
-          deadline_date: deadlineDate,
-          notes: addNotes,
-          status: addStatus,
-        }),
-      });
-      const data = await res.json();
-      if (data.error) {
-        alert(data.error);
-      } else {
-        setAddingSchool(null);
-        setAddNotes("");
-        setAddStatus("not_started");
-        await loadApplications();
-        await loadAlerts();
-        setTab("dashboard");
+  const sorted = [...applications]
+    .filter((a) => statusFilter === "all" || a.status === statusFilter)
+    .sort((a, b) => {
+      if (sortBy === "deadline") {
+        return new Date(a.deadlineDate).getTime() - new Date(b.deadlineDate).getTime();
       }
-    } catch {
-      alert("Failed to add application");
-    } finally {
-      setAddLoading(false);
-    }
-  }
+      return a.schoolName.localeCompare(b.schoolName);
+    });
 
-  async function handleEditSave() {
-    if (!editingApp) return;
-    setEditLoading(true);
-    try {
-      const res = await fetch("/api/applications", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: editingApp.id, notes: editNotes, status: editStatus }),
-      });
-      const data = await res.json();
-      if (data.error) {
-        alert(data.error);
-      } else {
-        setEditingApp(null);
-        await loadApplications();
-        await loadAlerts();
-      }
-    } catch {
-      alert("Failed to save");
-    } finally {
-      setEditLoading(false);
-    }
-  }
+  const upcoming = applications
+    .filter((a) => {
+      const d = daysUntil(a.deadlineDate);
+      return d >= 0 && d <= 7 && a.status !== "submitted" && a.status !== "accepted";
+    })
+    .sort((a, b) => daysUntil(a.deadlineDate) - daysUntil(b.deadlineDate));
 
-  async function handleDelete(id: number) {
-    if (!confirm("Remove this application?")) return;
-    await fetch(`/api/applications?id=${id}`, { method: "DELETE" });
-    await loadApplications();
-    await loadAlerts();
-  }
-
-  const filteredSchools = SCHOOLS.filter(
-    (s) =>
-      s.name.toLowerCase().includes(schoolSearch.toLowerCase()) ||
-      s.location.toLowerCase().includes(schoolSearch.toLowerCase())
-  );
-
-  // Unique schools to avoid duplicates from the static array
-  const uniqueSchools = filteredSchools.filter(
-    (s, i, arr) => arr.findIndex((x) => x.id === s.id) === i
-  );
-
-  const trackedIds = new Set(applications.map((a) => a.school_id));
-
-  // Group applications by school
-  const appsBySchool: Record<string, Application[]> = {};
-  for (const app of applications) {
-    if (!appsBySchool[app.school_id]) appsBySchool[app.school_id] = [];
-    appsBySchool[app.school_id].push(app);
-  }
+  // ===================== RENDER =====================
 
   return (
-    <div style={{ minHeight: "100vh", background: "#f0f4ff", fontFamily: "system-ui, sans-serif" }}>
+    <div style={{ minHeight: "100vh", background: "#f0f6ff", fontFamily: "'Inter', 'Segoe UI', sans-serif" }}>
       {/* Header */}
-      <header
-        style={{
-          background: "#1a56db",
-          color: "white",
-          padding: "0 24px",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          height: 64,
-          boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
-        }}
-      >
+      <header style={{
+        background: "#1a56db",
+        color: "#fff",
+        padding: "0 24px",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        height: 64,
+        boxShadow: "0 2px 12px rgba(26,86,219,0.3)",
+        position: "sticky",
+        top: 0,
+        zIndex: 100,
+      }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <img
             src="https://kobwhnsy46wia1ga.public.blob.vercel-storage.com/olympus/MHzFM0XwMRAKcI38/ms9ar2f7-ee744c62-792d-4a40-9a12-3f39cebb7464-removebg-preview-3C58eOMxvVC76P595ELS8vavDN1zzQ.png"
-            alt="Edutracker"
-            style={{ height: 40, width: "auto" }}
+            alt="Edutracker Logo"
+            style={{ height: 40, width: "auto", objectFit: "contain" }}
           />
-          <span style={{ fontSize: 22, fontWeight: 700, letterSpacing: "-0.5px" }}>Edutracker</span>
+          <span style={{ fontWeight: 700, fontSize: 20, letterSpacing: "-0.3px" }}>Edutracker</span>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           {email ? (
             <>
-              <span style={{ fontSize: 14, opacity: 0.85 }}>{email}</span>
-              <button
-                onClick={handleLogout}
-                style={{
-                  background: "rgba(255,255,255,0.15)",
-                  border: "1px solid rgba(255,255,255,0.3)",
-                  color: "white",
-                  padding: "6px 14px",
-                  borderRadius: 6,
-                  cursor: "pointer",
-                  fontSize: 14,
-                }}
-              >
-                Sign Out
-              </button>
+              <span style={{ fontSize: 13, opacity: 0.85 }}>{email}</span>
+              <button onClick={handleLogout} style={{
+                background: "rgba(255,255,255,0.15)",
+                border: "1px solid rgba(255,255,255,0.3)",
+                color: "#fff",
+                borderRadius: 8,
+                padding: "6px 14px",
+                fontSize: 13,
+                cursor: "pointer",
+              }}>Sign Out</button>
             </>
           ) : (
-            <span style={{ fontSize: 14, opacity: 0.75 }}>Sign in to track applications</span>
+            <>
+              <button onClick={() => setAuthView("login")} style={{
+                background: "rgba(255,255,255,0.15)",
+                border: "1px solid rgba(255,255,255,0.3)",
+                color: "#fff",
+                borderRadius: 8,
+                padding: "6px 14px",
+                fontSize: 13,
+                cursor: "pointer",
+              }}>Sign In</button>
+              <button onClick={() => setAuthView("signup")} style={{
+                background: "#fff",
+                border: "none",
+                color: "#1a56db",
+                borderRadius: 8,
+                padding: "6px 14px",
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: "pointer",
+              }}>Sign Up</button>
+            </>
           )}
         </div>
       </header>
 
-      <div style={{ maxWidth: 960, margin: "0 auto", padding: "24px 16px" }}>
-        {/* Auth panel */}
-        {!email && (
-          <div
-            style={{
-              background: "white",
-              borderRadius: 12,
-              padding: 32,
-              maxWidth: 420,
-              margin: "0 auto 32px",
-              boxShadow: "0 2px 12px rgba(0,0,0,0.08)",
-            }}
-          >
-            <h2 style={{ margin: "0 0 20px", fontSize: 22, color: "#1a56db" }}>
-              {authMode === "login" ? "Sign In" : "Create Account"}
+      {/* Auth Modal */}
+      {authView !== "none" && (
+        <div style={{
+          position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)",
+          zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center",
+        }}>
+          <div style={{
+            background: "#fff", borderRadius: 16, padding: 32, width: 360,
+            boxShadow: "0 20px 60px rgba(0,0,0,0.2)",
+          }}>
+            <h2 style={{ margin: "0 0 20px", fontSize: 20, color: "#1e293b" }}>
+              {authView === "login" ? "Sign In" : "Create Account"}
             </h2>
-            <form onSubmit={handleAuth} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              <input
-                type="email"
-                placeholder="Email"
-                value={authEmail}
-                onChange={(e) => setAuthEmail(e.target.value)}
-                required
-                style={inputStyle}
-              />
-              <input
-                type="password"
-                placeholder="Password"
-                value={authPassword}
-                onChange={(e) => setAuthPassword(e.target.value)}
-                required
-                style={inputStyle}
-              />
-              {authError && (
-                <p style={{ color: "#e74c3c", margin: 0, fontSize: 14 }}>{authError}</p>
-              )}
+            <input
+              type="email"
+              placeholder="Email"
+              value={authEmail}
+              onChange={(e) => setAuthEmail(e.target.value)}
+              style={inputStyle}
+            />
+            <input
+              type="password"
+              placeholder="Password"
+              value={authPassword}
+              onChange={(e) => setAuthPassword(e.target.value)}
+              style={{ ...inputStyle, marginTop: 10 }}
+              onKeyDown={(e) => e.key === "Enter" && handleAuth(authView as "login" | "signup")}
+            />
+            {authError && <p style={{ color: "#ef4444", fontSize: 13, margin: "8px 0 0" }}>{authError}</p>}
+            <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
               <button
-                type="submit"
-                disabled={authLoading}
-                style={{
-                  background: "#1a56db",
-                  color: "white",
-                  border: "none",
-                  padding: "12px",
-                  borderRadius: 8,
-                  fontSize: 15,
-                  fontWeight: 600,
-                  cursor: authLoading ? "not-allowed" : "pointer",
-                  opacity: authLoading ? 0.7 : 1,
-                }}
+                onClick={() => handleAuth(authView as "login" | "signup")}
+                style={{ ...btnPrimaryStyle, flex: 1 }}
               >
-                {authLoading ? "..." : authMode === "login" ? "Sign In" : "Sign Up"}
+                {authView === "login" ? "Sign In" : "Sign Up"}
               </button>
-            </form>
-            <p style={{ margin: "16px 0 0", fontSize: 14, color: "#666", textAlign: "center" }}>
-              {authMode === "login" ? "Don't have an account?" : "Already have an account?"}{" "}
               <button
-                onClick={() => {
-                  setAuthMode(authMode === "login" ? "signup" : "login");
-                  setAuthError("");
-                }}
-                style={{
-                  background: "none",
-                  border: "none",
-                  color: "#1a56db",
-                  cursor: "pointer",
-                  fontWeight: 600,
-                  fontSize: 14,
-                  padding: 0,
-                }}
+                onClick={() => { setAuthView("none"); setAuthError(""); }}
+                style={{ ...btnSecondaryStyle, flex: 1 }}
               >
-                {authMode === "login" ? "Sign Up" : "Sign In"}
-              </button>
-            </p>
-
-            {/* Browse schools without account */}
-            <div
-              style={{
-                marginTop: 24,
-                paddingTop: 20,
-                borderTop: "1px solid #eee",
-                textAlign: "center",
-              }}
-            >
-              <p style={{ margin: "0 0 8px", fontSize: 13, color: "#888" }}>
-                Want to browse colleges first?
-              </p>
-              <button
-                onClick={() => setTab("schools")}
-                style={{
-                  background: "#f0f4ff",
-                  border: "1px solid #1a56db",
-                  color: "#1a56db",
-                  padding: "8px 20px",
-                  borderRadius: 6,
-                  cursor: "pointer",
-                  fontSize: 14,
-                  fontWeight: 500,
-                }}
-              >
-                Browse Colleges
+                Cancel
               </button>
             </div>
+            <p style={{ fontSize: 13, color: "#64748b", marginTop: 14, textAlign: "center" }}>
+              {authView === "login" ? (
+                <>No account? <span style={{ color: "#1a56db", cursor: "pointer" }} onClick={() => setAuthView("signup")}>Sign up</span></>
+              ) : (
+                <>Have an account? <span style={{ color: "#1a56db", cursor: "pointer" }} onClick={() => setAuthView("login")}>Sign in</span></>
+              )}
+            </p>
           </div>
-        )}
-
-        {/* Tabs */}
-        <div style={{ display: "flex", gap: 4, marginBottom: 24, borderBottom: "2px solid #dde4f5" }}>
-          {(["dashboard", "schools", "alerts"] as Tab[]).map((t) => (
-            <button
-              key={t}
-              onClick={() => setTab(t)}
-              style={{
-                background: "none",
-                border: "none",
-                padding: "10px 22px",
-                cursor: "pointer",
-                fontSize: 15,
-                fontWeight: tab === t ? 700 : 400,
-                color: tab === t ? "#1a56db" : "#555",
-                borderBottom: tab === t ? "2px solid #1a56db" : "2px solid transparent",
-                marginBottom: -2,
-                textTransform: "capitalize",
-              }}
-            >
-              {t === "alerts" && alerts.length > 0 ? `Alerts (${alerts.length})` : t.charAt(0).toUpperCase() + t.slice(1)}
-            </button>
-          ))}
         </div>
+      )}
 
-        {/* Dashboard Tab */}
-        {tab === "dashboard" && (
-          <div>
-            {!email ? (
-              <div
-                style={{
-                  background: "white",
-                  borderRadius: 12,
-                  padding: 40,
-                  textAlign: "center",
-                  boxShadow: "0 2px 8px rgba(0,0,0,0.06)",
-                }}
-              >
-                <h2 style={{ color: "#1a56db", marginTop: 0 }}>Track Your College Applications</h2>
-                <p style={{ color: "#666", marginBottom: 24 }}>
-                  Never miss a deadline. Sign in to start tracking your applications.
-                </p>
-                <div style={{ display: "flex", gap: 16, justifyContent: "center", flexWrap: "wrap" }}>
-                  {SCHOOLS.slice(0, 6).map((s, i) => SCHOOLS.findIndex((x) => x.id === s.id) === i && (
-                    <div
-                      key={s.id}
-                      style={{
-                        background: "#f8faff",
-                        border: "1px solid #dde4f5",
-                        borderRadius: 8,
-                        padding: "12px 16px",
-                        fontSize: 14,
-                        color: "#333",
-                        minWidth: 150,
-                      }}
-                    >
-                      <strong>{s.name}</strong>
-                      <br />
-                      <span style={{ color: "#666", fontSize: 12 }}>{s.location}</span>
-                    </div>
-                  ))}
+      <main style={{ maxWidth: 860, margin: "0 auto", padding: "28px 20px" }}>
+
+        {/* DASHBOARD VIEW */}
+        {view === "dashboard" && (
+          <>
+            {/* Urgent Alerts */}
+            {upcoming.length > 0 && (
+              <div style={{
+                background: "#fff7ed",
+                border: "1px solid #fed7aa",
+                borderRadius: 12,
+                padding: "14px 18px",
+                marginBottom: 20,
+              }}>
+                <div style={{ fontWeight: 600, color: "#c2410c", marginBottom: 8, fontSize: 14 }}>
+                  ⚠️ Deadlines in the next 7 days
                 </div>
+                {upcoming.map((a) => (
+                  <div key={a.id} style={{
+                    display: "flex", alignItems: "center", justifyContent: "space-between",
+                    padding: "6px 0", borderTop: "1px solid #fed7aa",
+                  }}>
+                    <span style={{ fontSize: 14, color: "#1e293b" }}>{a.schoolName}</span>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: "#ef4444" }}>
+                      {daysUntil(a.deadlineDate) === 0 ? "TODAY" : `${daysUntil(a.deadlineDate)}d left`}
+                    </span>
+                  </div>
+                ))}
               </div>
-            ) : loadingApps ? (
-              <div style={{ textAlign: "center", padding: 40, color: "#888" }}>Loading...</div>
-            ) : applications.length === 0 ? (
-              <div
-                style={{
-                  background: "white",
+            )}
+
+            {/* Stats */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 24 }}>
+              {(["planning", "in-progress", "submitted", "accepted"] as const).map((s) => (
+                <div key={s} style={{
+                  background: "#fff",
                   borderRadius: 12,
-                  padding: 40,
+                  padding: "16px",
                   textAlign: "center",
-                  boxShadow: "0 2px 8px rgba(0,0,0,0.06)",
+                  boxShadow: "0 1px 4px rgba(0,0,0,0.06)",
+                  cursor: "pointer",
+                  border: statusFilter === s ? `2px solid ${STATUS_COLORS[s]}` : "2px solid transparent",
                 }}
-              >
-                <h3 style={{ color: "#1a56db", marginTop: 0 }}>No applications yet</h3>
-                <p style={{ color: "#666" }}>Go to the Schools tab to add colleges you&apos;re applying to.</p>
-                <button
-                  onClick={() => setTab("schools")}
-                  style={primaryBtnStyle}
+                  onClick={() => setStatusFilter(statusFilter === s ? "all" : s)}
                 >
-                  Browse Schools
+                  <div style={{ fontSize: 26, fontWeight: 700, color: STATUS_COLORS[s] }}>
+                    {applications.filter((a) => a.status === s).length}
+                  </div>
+                  <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>{STATUS_LABELS[s]}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Controls */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, gap: 10, flexWrap: "wrap" }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <select
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value)}
+                  style={{ ...selectStyle }}
+                >
+                  <option value="all">All Statuses</option>
+                  {Object.entries(STATUS_LABELS).map(([v, l]) => (
+                    <option key={v} value={v}>{l}</option>
+                  ))}
+                </select>
+                <select
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value as "deadline" | "name")}
+                  style={{ ...selectStyle }}
+                >
+                  <option value="deadline">Sort by Deadline</option>
+                  <option value="name">Sort by Name</option>
+                </select>
+              </div>
+              <button onClick={() => setView("add")} style={btnPrimaryStyle}>
+                + Add College
+              </button>
+            </div>
+
+            {/* Applications List */}
+            {sorted.length === 0 ? (
+              <div style={{
+                background: "#fff",
+                borderRadius: 16,
+                padding: "60px 24px",
+                textAlign: "center",
+                boxShadow: "0 1px 4px rgba(0,0,0,0.06)",
+              }}>
+                <div style={{ fontSize: 48, marginBottom: 12 }}>🎓</div>
+                <h2 style={{ color: "#1e293b", margin: "0 0 8px" }}>No applications yet</h2>
+                <p style={{ color: "#64748b", margin: "0 0 20px" }}>
+                  Start tracking your college applications and never miss a deadline.
+                </p>
+                <button onClick={() => setView("add")} style={btnPrimaryStyle}>
+                  Add Your First College
                 </button>
               </div>
             ) : (
-              <div>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-                  <h2 style={{ margin: 0, color: "#1a2340", fontSize: 20 }}>
-                    My Applications ({applications.length})
-                  </h2>
-                  <button onClick={() => setTab("schools")} style={primaryBtnStyle}>
-                    + Add School
-                  </button>
-                </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                  {applications.map((app) => {
-                    const days = daysUntilClient(app.deadline_date);
-                    const urgentColor =
-                      days < 0 ? "#999" : days <= 3 ? "#e74c3c" : days <= 7 ? "#f39c12" : "#1a56db";
-                    return (
-                      <div
-                        key={app.id}
-                        style={{
-                          background: "white",
-                          borderRadius: 10,
-                          padding: "16px 20px",
-                          boxShadow: "0 1px 6px rgba(0,0,0,0.07)",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "space-between",
-                          flexWrap: "wrap",
-                          gap: 12,
-                          borderLeft: `4px solid ${STATUS_COLORS[app.status] ?? "#ccc"}`,
-                        }}
-                      >
-                        <div>
-                          <div style={{ fontWeight: 700, fontSize: 16, color: "#1a2340" }}>
-                            {app.school_name}
-                          </div>
-                          <div style={{ fontSize: 13, color: "#666", marginTop: 2 }}>
-                            {app.deadline_type === "earlyDecision"
-                              ? "Early Decision"
-                              : app.deadline_type === "earlyAction"
-                              ? "Early Action"
-                              : app.deadline_type === "regularDecision"
-                              ? "Regular Decision"
-                              : app.deadline_type === "financialAid"
-                              ? "Financial Aid"
-                              : app.deadline_type}{" "}
-                            · {formatDate(app.deadline_date)}
-                          </div>
-                          {app.notes && (
-                            <div style={{ fontSize: 12, color: "#888", marginTop: 4, fontStyle: "italic" }}>
-                              {app.notes}
-                            </div>
-                          )}
-                        </div>
-                        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                          <span
-                            style={{
-                              fontSize: 13,
-                              fontWeight: 600,
-                              color: urgentColor,
-                              background: `${urgentColor}15`,
-                              padding: "4px 10px",
-                              borderRadius: 20,
-                            }}
-                          >
-                            {days < 0
-                              ? "Past due"
-                              : days === 0
-                              ? "Due today"
-                              : days === 1
-                              ? "1 day left"
-                              : `${days} days`}
-                          </span>
-                          <span
-                            style={{
-                              fontSize: 12,
-                              background: `${STATUS_COLORS[app.status]}20`,
-                              color: STATUS_COLORS[app.status],
-                              padding: "3px 8px",
-                              borderRadius: 12,
-                              fontWeight: 600,
-                            }}
-                          >
-                            {STATUS_LABELS[app.status]}
-                          </span>
-                          <button
-                            onClick={() => {
-                              setEditingApp(app);
-                              setEditNotes(app.notes);
-                              setEditStatus(app.status);
-                            }}
-                            style={iconBtnStyle}
-                            title="Edit"
-                          >
-                            ✏️
-                          </button>
-                          <button
-                            onClick={() => handleDelete(app.id)}
-                            style={iconBtnStyle}
-                            title="Delete"
-                          >
-                            🗑️
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Schools Tab */}
-        {tab === "schools" && (
-          <div>
-            <div style={{ marginBottom: 20 }}>
-              <input
-                type="text"
-                placeholder="Search colleges by name or location..."
-                value={schoolSearch}
-                onChange={(e) => setSchoolSearch(e.target.value)}
-                style={{ ...inputStyle, maxWidth: 400, fontSize: 15 }}
-              />
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 16 }}>
-              {uniqueSchools.map((school) => {
-                const isTracked = trackedIds.has(school.id);
-                const deadlineEntries = Object.entries(school.deadlines).filter(([, v]) => v) as [
-                  string,
-                  string
-                ][];
-                return (
-                  <div
-                    key={school.id}
-                    style={{
-                      background: "white",
-                      borderRadius: 10,
-                      padding: 20,
-                      boxShadow: "0 1px 6px rgba(0,0,0,0.07)",
-                      border: isTracked ? "2px solid #1a56db" : "2px solid transparent",
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: 8,
-                    }}
-                  >
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                      <div>
-                        <div style={{ fontWeight: 700, fontSize: 15, color: "#1a2340" }}>{school.name}</div>
-                        <div style={{ fontSize: 12, color: "#888", marginTop: 2 }}>
-                          {school.location} · {school.type === "public" ? "Public" : "Private"}
-                        </div>
-                      </div>
-                      {isTracked && (
-                        <span style={{ fontSize: 11, color: "#1a56db", fontWeight: 600, background: "#e8efff", padding: "2px 8px", borderRadius: 10 }}>
-                          Tracking
-                        </span>
-                      )}
-                    </div>
-                    <div style={{ fontSize: 12, color: "#555" }}>
-                      {deadlineEntries.map(([type, date]) => (
-                        <div key={type} style={{ display: "flex", justifyContent: "space-between", marginTop: 4 }}>
-                          <span style={{ color: "#888" }}>
-                            {type === "earlyDecision"
-                              ? "Early Decision"
-                              : type === "earlyAction"
-                              ? "Early Action"
-                              : type === "regularDecision"
-                              ? "Regular Decision"
-                              : type === "financialAid"
-                              ? "Financial Aid"
-                              : type}
-                          </span>
-                          <span style={{ fontWeight: 600, color: "#1a2340" }}>{formatDate(date)}</span>
-                        </div>
-                      ))}
-                    </div>
-                    {email && (
-                      <button
-                        onClick={() => {
-                          setAddingSchool(school);
-                          const firstKey = Object.keys(school.deadlines)[0];
-                          setAddDeadlineType(firstKey);
-                          setAddNotes("");
-                          setAddStatus("not_started");
-                        }}
-                        style={{
-                          ...primaryBtnStyle,
-                          marginTop: 8,
-                          fontSize: 13,
-                          padding: "7px 0",
-                          width: "100%",
-                          background: isTracked ? "#e8efff" : "#1a56db",
-                          color: isTracked ? "#1a56db" : "white",
-                        }}
-                      >
-                        {isTracked ? "Add Another Deadline" : "Track Application"}
-                      </button>
-                    )}
-                    {!email && (
-                      <button
-                        onClick={() => {
-                          setAuthMode("signup");
-                          setTab("dashboard");
-                        }}
-                        style={{ ...primaryBtnStyle, marginTop: 8, fontSize: 13, padding: "7px 0", width: "100%" }}
-                      >
-                        Sign In to Track
-                      </button>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* Alerts Tab */}
-        {tab === "alerts" && (
-          <div>
-            {!email ? (
-              <div
-                style={{
-                  background: "white",
-                  borderRadius: 12,
-                  padding: 40,
-                  textAlign: "center",
-                  boxShadow: "0 2px 8px rgba(0,0,0,0.06)",
-                }}
-              >
-                <p style={{ color: "#666" }}>Sign in to see your upcoming deadline alerts.</p>
-              </div>
-            ) : alerts.length === 0 ? (
-              <div
-                style={{
-                  background: "white",
-                  borderRadius: 12,
-                  padding: 40,
-                  textAlign: "center",
-                  boxShadow: "0 2px 8px rgba(0,0,0,0.06)",
-                }}
-              >
-                <h3 style={{ color: "#27ae60", marginTop: 0 }}>🎉 No urgent deadlines!</h3>
-                <p style={{ color: "#666" }}>
-                  You have no application deadlines in the next 7 days.
-                </p>
-              </div>
-            ) : (
-              <div>
-                <h2 style={{ margin: "0 0 16px", color: "#1a2340", fontSize: 20 }}>
-                  Upcoming Deadlines (Next 7 Days)
-                </h2>
-                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                  {alerts.map((alert) => (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {sorted.map((app) => {
+                  const days = daysUntil(app.deadlineDate);
+                  return (
                     <div
-                      key={alert.id}
+                      key={app.id}
+                      onClick={() => { setSelectedApp(app); setView("detail"); }}
                       style={{
-                        background: "white",
-                        borderRadius: 10,
+                        background: "#fff",
+                        borderRadius: 12,
                         padding: "16px 20px",
-                        boxShadow: "0 1px 6px rgba(0,0,0,0.07)",
                         display: "flex",
                         alignItems: "center",
                         justifyContent: "space-between",
-                        borderLeft: `4px solid ${alert.daysUntil <= 2 ? "#e74c3c" : "#f39c12"}`,
+                        cursor: "pointer",
+                        boxShadow: "0 1px 4px rgba(0,0,0,0.06)",
+                        border: "1px solid #e2e8f0",
+                        transition: "box-shadow 0.15s",
+                        gap: 12,
                       }}
                     >
-                      <div>
-                        <div style={{ fontWeight: 700, fontSize: 16, color: "#1a2340" }}>
-                          {alert.school_name}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 600, color: "#1e293b", fontSize: 15, marginBottom: 2 }}>
+                          {app.schoolName}
                         </div>
-                        <div style={{ fontSize: 13, color: "#666", marginTop: 2 }}>
-                          {alert.deadline_type === "earlyDecision"
-                            ? "Early Decision"
-                            : alert.deadline_type === "earlyAction"
-                            ? "Early Action"
-                            : alert.deadline_type === "regularDecision"
-                            ? "Regular Decision"
-                            : alert.deadline_type === "financialAid"
-                            ? "Financial Aid"
-                            : alert.deadline_type}{" "}
-                          · Due {formatDate(alert.deadline_date)}
+                        <div style={{ fontSize: 12, color: "#94a3b8" }}>
+                          {app.schoolLocation} &middot; {app.deadlineType === "EA" ? "Early Action" : app.deadlineType === "ED" ? "Early Decision" : "Regular Decision"}
                         </div>
                       </div>
-                      <div
-                        style={{
-                          fontSize: 15,
-                          fontWeight: 700,
-                          color: alert.daysUntil <= 2 ? "#e74c3c" : "#f39c12",
-                          background:
-                            alert.daysUntil <= 2 ? "#fdecea" : "#fff8e6",
-                          padding: "6px 14px",
-                          borderRadius: 20,
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {alert.daysUntil === 0
-                          ? "Due today!"
-                          : alert.daysUntil === 1
-                          ? "1 day left!"
-                          : `${alert.daysUntil} days left`}
+                      <div style={{ textAlign: "right", flexShrink: 0 }}>
+                        <div style={{ fontSize: 13, color: "#64748b" }}>{formatDate(app.deadlineDate)}</div>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: days < 0 ? "#6b7280" : urgencyColor(days), marginTop: 2 }}>
+                          {days < 0 ? "Past deadline" : days === 0 ? "Today!" : `${days} days`}
+                        </div>
+                      </div>
+                      <div style={{
+                        background: STATUS_COLORS[app.status] + "22",
+                        color: STATUS_COLORS[app.status],
+                        borderRadius: 20,
+                        padding: "3px 10px",
+                        fontSize: 12,
+                        fontWeight: 600,
+                        flexShrink: 0,
+                      }}>
+                        {STATUS_LABELS[app.status]}
                       </div>
                     </div>
+                  );
+                })}
+              </div>
+            )}
+          </>
+        )}
+
+        {/* ADD VIEW */}
+        {view === "add" && (
+          <div style={{ maxWidth: 560, margin: "0 auto" }}>
+            <button onClick={() => { setView("dashboard"); setSelectedSchool(null); setSchoolSearch(""); }} style={backBtnStyle}>
+              ← Back
+            </button>
+            <h1 style={{ color: "#1e293b", margin: "16px 0 24px", fontSize: 22 }}>Add a College</h1>
+
+            <div style={cardStyle}>
+              {/* School Search */}
+              <div style={{ marginBottom: 20 }}>
+                <label style={labelStyle}>College / University</label>
+                {selectedSchool ? (
+                  <div style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    padding: "12px 16px",
+                    background: "#eff6ff",
+                    borderRadius: 10,
+                    border: "1px solid #bfdbfe",
+                  }}>
+                    <div>
+                      <div style={{ fontWeight: 600, color: "#1e293b" }}>{selectedSchool.name}</div>
+                      <div style={{ fontSize: 12, color: "#64748b" }}>{selectedSchool.location}</div>
+                    </div>
+                    <button
+                      onClick={() => { setSelectedSchool(null); setCustomDate(""); }}
+                      style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: 18 }}
+                    >×</button>
+                  </div>
+                ) : (
+                  <div style={{ position: "relative" }}>
+                    <input
+                      type="text"
+                      placeholder="Search 150+ colleges..."
+                      value={schoolSearch}
+                      onChange={(e) => { setSchoolSearch(e.target.value); setSearchOpen(true); }}
+                      onFocus={() => setSearchOpen(true)}
+                      style={inputStyle}
+                      autoComplete="off"
+                    />
+                    {searchOpen && (
+                      <div style={{
+                        position: "absolute", top: "100%", left: 0, right: 0,
+                        background: "#fff", borderRadius: "0 0 10px 10px",
+                        border: "1px solid #e2e8f0", borderTop: "none",
+                        maxHeight: 280, overflowY: "auto",
+                        zIndex: 50, boxShadow: "0 8px 24px rgba(0,0,0,0.1)",
+                      }}>
+                        {loadingSchools ? (
+                          <div style={{ padding: 16, textAlign: "center", color: "#94a3b8" }}>Loading...</div>
+                        ) : filteredSchools.length === 0 ? (
+                          <div style={{ padding: 16, textAlign: "center", color: "#94a3b8" }}>No schools found</div>
+                        ) : (
+                          filteredSchools.map((s) => (
+                            <div
+                              key={s.id}
+                              onClick={() => handleSelectSchool(s)}
+                              style={{
+                                padding: "10px 16px",
+                                cursor: "pointer",
+                                borderBottom: "1px solid #f1f5f9",
+                                transition: "background 0.1s",
+                              }}
+                              onMouseEnter={(e) => (e.currentTarget.style.background = "#f0f6ff")}
+                              onMouseLeave={(e) => (e.currentTarget.style.background = "#fff")}
+                            >
+                              <div style={{ fontWeight: 500, color: "#1e293b", fontSize: 14 }}>{s.name}</div>
+                              <div style={{ fontSize: 12, color: "#94a3b8" }}>
+                                {s.location} &middot; {s.type === "public" ? "Public" : "Private"}
+                                {s.acceptanceRate !== undefined ? ` · ${s.acceptanceRate}% acceptance` : ""}
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Deadline Type */}
+              {selectedSchool && (
+                <div style={{ marginBottom: 20 }}>
+                  <label style={labelStyle}>Application Round</label>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    {(["EA", "ED", "RD"] as const).map((type) => {
+                      const available = type === "EA"
+                        ? !!selectedSchool.earlyActionDeadline
+                        : type === "ED"
+                          ? !!selectedSchool.earlyDecisionDeadline
+                          : !!selectedSchool.regularDecisionDeadline;
+                      const labels = { EA: "Early Action", ED: "Early Decision", RD: "Regular Decision" };
+                      return (
+                        <button
+                          key={type}
+                          onClick={() => available && handleDeadlineTypeChange(type)}
+                          style={{
+                            flex: 1,
+                            padding: "10px 6px",
+                            borderRadius: 8,
+                            border: deadlineType === type ? "2px solid #1a56db" : "2px solid #e2e8f0",
+                            background: deadlineType === type ? "#eff6ff" : "#fff",
+                            color: !available ? "#cbd5e1" : deadlineType === type ? "#1a56db" : "#475569",
+                            fontSize: 12,
+                            fontWeight: 600,
+                            cursor: available ? "pointer" : "not-allowed",
+                          }}
+                        >
+                          {type}<br />
+                          <span style={{ fontWeight: 400, fontSize: 11 }}>{labels[type]}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Date */}
+              <div style={{ marginBottom: 20 }}>
+                <label style={labelStyle}>Deadline Date</label>
+                <input
+                  type="date"
+                  value={customDate}
+                  onChange={(e) => setCustomDate(e.target.value)}
+                  style={inputStyle}
+                />
+              </div>
+
+              {/* Notes */}
+              <div style={{ marginBottom: 24 }}>
+                <label style={labelStyle}>Notes (optional)</label>
+                <textarea
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  placeholder="Add any notes about this application..."
+                  rows={3}
+                  style={{ ...inputStyle, resize: "vertical" }}
+                />
+              </div>
+
+              <button
+                onClick={handleAddApplication}
+                disabled={!selectedSchool || !customDate || saving}
+                style={{
+                  ...btnPrimaryStyle,
+                  width: "100%",
+                  opacity: !selectedSchool || !customDate ? 0.5 : 1,
+                }}
+              >
+                {saving ? "Adding..." : "Add to My List"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* DETAIL VIEW */}
+        {view === "detail" && selectedApp && (
+          <div style={{ maxWidth: 560, margin: "0 auto" }}>
+            <button onClick={() => { setView("dashboard"); setSelectedApp(null); }} style={backBtnStyle}>
+              ← Back
+            </button>
+            <div style={{ ...cardStyle, marginTop: 16 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
+                <div>
+                  <h1 style={{ margin: "0 0 4px", fontSize: 20, color: "#1e293b" }}>{selectedApp.schoolName}</h1>
+                  <div style={{ fontSize: 13, color: "#94a3b8" }}>{selectedApp.schoolLocation}</div>
+                </div>
+                <button onClick={() => handleDelete(selectedApp.id)} style={{
+                  background: "none", border: "none", color: "#ef4444",
+                  cursor: "pointer", fontSize: 13, fontWeight: 500,
+                }}>
+                  Delete
+                </button>
+              </div>
+
+              {/* Deadline Info */}
+              <div style={{
+                background: "#f8fafc",
+                borderRadius: 10,
+                padding: "14px 16px",
+                marginBottom: 20,
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+              }}>
+                <div>
+                  <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 4 }}>
+                    {selectedApp.deadlineType === "EA" ? "Early Action" : selectedApp.deadlineType === "ED" ? "Early Decision" : "Regular Decision"}
+                  </div>
+                  <div style={{ fontWeight: 600, color: "#1e293b" }}>{formatDate(selectedApp.deadlineDate)}</div>
+                </div>
+                <div style={{
+                  fontSize: 20,
+                  fontWeight: 700,
+                  color: urgencyColor(daysUntil(selectedApp.deadlineDate)),
+                }}>
+                  {daysUntil(selectedApp.deadlineDate) < 0
+                    ? "Past"
+                    : daysUntil(selectedApp.deadlineDate) === 0
+                      ? "Today!"
+                      : `${daysUntil(selectedApp.deadlineDate)} days`}
+                </div>
+              </div>
+
+              {/* Status */}
+              <div style={{ marginBottom: 20 }}>
+                <label style={labelStyle}>Status</label>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {Object.entries(STATUS_LABELS).map(([val, label]) => (
+                    <button
+                      key={val}
+                      onClick={() => handleUpdateStatus(selectedApp.id, val as Application["status"])}
+                      style={{
+                        padding: "7px 14px",
+                        borderRadius: 20,
+                        border: selectedApp.status === val
+                          ? `2px solid ${STATUS_COLORS[val as Application["status"]]}`
+                          : "2px solid #e2e8f0",
+                        background: selectedApp.status === val
+                          ? STATUS_COLORS[val as Application["status"]] + "22"
+                          : "#fff",
+                        color: selectedApp.status === val
+                          ? STATUS_COLORS[val as Application["status"]]
+                          : "#64748b",
+                        fontSize: 13,
+                        fontWeight: selectedApp.status === val ? 600 : 400,
+                        cursor: "pointer",
+                      }}
+                    >
+                      {label}
+                    </button>
                   ))}
                 </div>
               </div>
-            )}
+
+              {/* Notes */}
+              <div>
+                <label style={labelStyle}>Notes</label>
+                <textarea
+                  value={selectedApp.notes}
+                  onChange={(e) => handleUpdateNotes(selectedApp.id, e.target.value)}
+                  placeholder="Add notes about essays, requirements, interviews..."
+                  rows={4}
+                  style={{ ...inputStyle, resize: "vertical" }}
+                />
+              </div>
+            </div>
           </div>
         )}
-      </div>
-
-      {/* Add School Modal */}
-      {addingSchool && (
-        <div style={modalOverlayStyle} onClick={() => setAddingSchool(null)}>
-          <div style={modalStyle} onClick={(e) => e.stopPropagation()}>
-            <h3 style={{ margin: "0 0 16px", color: "#1a2340" }}>
-              Track {addingSchool.name}
-            </h3>
-            <label style={labelStyle}>Deadline Type</label>
-            <select
-              value={addDeadlineType}
-              onChange={(e) => setAddDeadlineType(e.target.value)}
-              style={inputStyle}
-            >
-              {Object.entries(addingSchool.deadlines)
-                .filter(([, v]) => v)
-                .map(([type]) => (
-                  <option key={type} value={type}>
-                    {type === "earlyDecision"
-                      ? "Early Decision"
-                      : type === "earlyAction"
-                      ? "Early Action"
-                      : type === "regularDecision"
-                      ? "Regular Decision"
-                      : type === "financialAid"
-                      ? "Financial Aid"
-                      : type}
-                  </option>
-                ))}
-            </select>
-            <label style={labelStyle}>Status</label>
-            <select
-              value={addStatus}
-              onChange={(e) => setAddStatus(e.target.value)}
-              style={inputStyle}
-            >
-              {STATUS_OPTIONS.map((s) => (
-                <option key={s} value={s}>
-                  {STATUS_LABELS[s]}
-                </option>
-              ))}
-            </select>
-            <label style={labelStyle}>Notes (optional)</label>
-            <textarea
-              value={addNotes}
-              onChange={(e) => setAddNotes(e.target.value)}
-              placeholder="Any notes about this application..."
-              rows={3}
-              style={{ ...inputStyle, resize: "vertical" }}
-            />
-            <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
-              <button
-                onClick={handleAddApplication}
-                disabled={addLoading}
-                style={{ ...primaryBtnStyle, flex: 1, opacity: addLoading ? 0.7 : 1 }}
-              >
-                {addLoading ? "Adding..." : "Add Application"}
-              </button>
-              <button
-                onClick={() => setAddingSchool(null)}
-                style={{
-                  flex: 1,
-                  background: "#f0f0f0",
-                  border: "none",
-                  borderRadius: 8,
-                  padding: "10px",
-                  cursor: "pointer",
-                  fontSize: 14,
-                  color: "#555",
-                }}
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Edit Modal */}
-      {editingApp && (
-        <div style={modalOverlayStyle} onClick={() => setEditingApp(null)}>
-          <div style={modalStyle} onClick={(e) => e.stopPropagation()}>
-            <h3 style={{ margin: "0 0 16px", color: "#1a2340" }}>
-              Edit: {editingApp.school_name}
-            </h3>
-            <label style={labelStyle}>Status</label>
-            <select
-              value={editStatus}
-              onChange={(e) => setEditStatus(e.target.value)}
-              style={inputStyle}
-            >
-              {STATUS_OPTIONS.map((s) => (
-                <option key={s} value={s}>
-                  {STATUS_LABELS[s]}
-                </option>
-              ))}
-            </select>
-            <label style={labelStyle}>Notes</label>
-            <textarea
-              value={editNotes}
-              onChange={(e) => setEditNotes(e.target.value)}
-              rows={3}
-              style={{ ...inputStyle, resize: "vertical" }}
-            />
-            <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
-              <button
-                onClick={handleEditSave}
-                disabled={editLoading}
-                style={{ ...primaryBtnStyle, flex: 1, opacity: editLoading ? 0.7 : 1 }}
-              >
-                {editLoading ? "Saving..." : "Save"}
-              </button>
-              <button
-                onClick={() => setEditingApp(null)}
-                style={{
-                  flex: 1,
-                  background: "#f0f0f0",
-                  border: "none",
-                  borderRadius: 8,
-                  padding: "10px",
-                  cursor: "pointer",
-                  fontSize: 14,
-                  color: "#555",
-                }}
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      </main>
     </div>
   );
 }
 
+// Shared styles
 const inputStyle: React.CSSProperties = {
   width: "100%",
-  padding: "10px 12px",
-  border: "1px solid #dde4f5",
+  padding: "10px 14px",
   borderRadius: 8,
+  border: "1px solid #e2e8f0",
   fontSize: 14,
+  color: "#1e293b",
+  background: "#fff",
   outline: "none",
   boxSizing: "border-box",
-  background: "white",
 };
 
-const primaryBtnStyle: React.CSSProperties = {
+const btnPrimaryStyle: React.CSSProperties = {
   background: "#1a56db",
-  color: "white",
+  color: "#fff",
   border: "none",
-  padding: "10px 20px",
   borderRadius: 8,
+  padding: "10px 20px",
   fontSize: 14,
   fontWeight: 600,
   cursor: "pointer",
 };
 
-const iconBtnStyle: React.CSSProperties = {
+const btnSecondaryStyle: React.CSSProperties = {
+  background: "#f1f5f9",
+  color: "#475569",
+  border: "1px solid #e2e8f0",
+  borderRadius: 8,
+  padding: "10px 20px",
+  fontSize: 14,
+  fontWeight: 500,
+  cursor: "pointer",
+};
+
+const backBtnStyle: React.CSSProperties = {
   background: "none",
   border: "none",
+  color: "#1a56db",
+  fontSize: 14,
   cursor: "pointer",
-  fontSize: 16,
-  padding: "4px",
-  borderRadius: 4,
+  padding: 0,
+  fontWeight: 500,
+};
+
+const cardStyle: React.CSSProperties = {
+  background: "#fff",
+  borderRadius: 16,
+  padding: 24,
+  boxShadow: "0 1px 6px rgba(0,0,0,0.07)",
 };
 
 const labelStyle: React.CSSProperties = {
   display: "block",
   fontSize: 13,
   fontWeight: 600,
-  color: "#444",
-  marginBottom: 4,
-  marginTop: 12,
+  color: "#374151",
+  marginBottom: 8,
 };
 
-const modalOverlayStyle: React.CSSProperties = {
-  position: "fixed",
-  inset: 0,
-  background: "rgba(0,0,0,0.5)",
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  zIndex: 1000,
-  padding: 16,
-};
-
-const modalStyle: React.CSSProperties = {
-  background: "white",
-  borderRadius: 12,
-  padding: 28,
-  width: "100%",
-  maxWidth: 420,
-  boxShadow: "0 8px 32px rgba(0,0,0,0.18)",
+const selectStyle: React.CSSProperties = {
+  padding: "8px 12px",
+  borderRadius: 8,
+  border: "1px solid #e2e8f0",
+  fontSize: 13,
+  color: "#1e293b",
+  background: "#fff",
+  cursor: "pointer",
 };
