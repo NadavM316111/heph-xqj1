@@ -1,77 +1,94 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useEffect, useState, useCallback } from "react";
+import { COLLEGES, College } from "@/lib/colleges";
 
-type DeadlineType = "Early Action" | "Early Decision" | "Regular Decision" | "Financial Aid";
+type User = { email: string };
+type Step = "landing" | "auth" | "onboarding-schools" | "onboarding-reminders" | "dashboard";
 
-interface Deadline {
-  id: number;
-  college_name: string;
-  deadline_type: DeadlineType;
-  deadline_date: string;
-  notes: string;
-  created_at: string;
+type DeadlineType = "EA" | "ED" | "ED2" | "RD" | "FAFSA";
+
+interface TrackedDeadline {
+  collegeId: string;
+  collegeName: string;
+  type: DeadlineType;
+  date: string;
+  reminderDays: number[];
 }
 
-interface AuthState {
-  email: string | null;
-  loading: boolean;
-  error: string | null;
+interface ReminderPrefs {
+  email: boolean;
+  sms: boolean;
+  phone: string;
+  days: number[];
 }
 
-const DEADLINE_TYPES: DeadlineType[] = [
-  "Early Action",
-  "Early Decision",
-  "Regular Decision",
-  "Financial Aid",
+function getTimeUntil(dateStr: string): { days: number; hours: number; minutes: number; seconds: number; past: boolean } {
+  const target = new Date(dateStr + "T23:59:00");
+  const now = new Date();
+  const diff = target.getTime() - now.getTime();
+  if (diff <= 0) return { days: 0, hours: 0, minutes: 0, seconds: 0, past: true };
+  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+  const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+  const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+  const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+  return { days, hours, minutes, seconds, past: false };
+}
+
+function urgencyColor(days: number, past: boolean): string {
+  if (past) return "#9ca3af";
+  if (days <= 1) return "#ef4444";
+  if (days <= 7) return "#f97316";
+  if (days <= 14) return "#eab308";
+  if (days <= 30) return "#3b82f6";
+  return "#10b981";
+}
+
+function deadlineTypeColor(type: DeadlineType): string {
+  const map: Record<DeadlineType, string> = {
+    EA: "#8b5cf6",
+    ED: "#ec4899",
+    ED2: "#f43f5e",
+    RD: "#3b82f6",
+    FAFSA: "#10b981",
+  };
+  return map[type];
+}
+
+const REMINDER_OPTIONS = [
+  { label: "30 days before", value: 30 },
+  { label: "14 days before", value: 14 },
+  { label: "7 days before", value: 7 },
+  { label: "1 day before", value: 1 },
 ];
 
-const TYPE_COLORS: Record<DeadlineType, string> = {
-  "Early Action": "#7c3aed",
-  "Early Decision": "#db2777",
-  "Regular Decision": "#2563eb",
-  "Financial Aid": "#0891b2",
-};
-
-function daysUntil(dateStr: string): number {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const target = new Date(dateStr + "T00:00:00");
-  target.setHours(0, 0, 0, 0);
-  return Math.ceil((target.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-}
-
-function urgencyColor(days: number): { bg: string; text: string; label: string } {
-  if (days < 0) return { bg: "#f3f4f6", text: "#6b7280", label: "Past" };
-  if (days < 7) return { bg: "#fef2f2", text: "#dc2626", label: "Urgent" };
-  if (days < 30) return { bg: "#fffbeb", text: "#d97706", label: "Soon" };
-  return { bg: "#f0fdf4", text: "#16a34a", label: "On Track" };
-}
-
 export default function Home() {
-  const [auth, setAuth] = useState<AuthState>({ email: null, loading: true, error: null });
-  const [authMode, setAuthMode] = useState<"login" | "signup">("login");
+  const [step, setStep] = useState<Step>("landing");
+  const [user, setUser] = useState<User | null>(null);
+  const [authMode, setAuthMode] = useState<"login" | "signup">("signup");
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
-  const [authSubmitting, setAuthSubmitting] = useState(false);
+  const [authError, setAuthError] = useState("");
+  const [authLoading, setAuthLoading] = useState(false);
 
-  const [deadlines, setDeadlines] = useState<Deadline[]>([]);
-  const [deadlinesLoading, setDeadlinesLoading] = useState(false);
+  const [selectedSchools, setSelectedSchools] = useState<string[]>([]);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedDeadlineTypes, setSelectedDeadlineTypes] = useState<Record<string, DeadlineType[]>>({});
 
-  const [showForm, setShowForm] = useState(false);
-  const [editingId, setEditingId] = useState<number | null>(null);
-  const [collegeSearch, setCollegeSearch] = useState("");
-  const [collegeInput, setCollegeInput] = useState("");
-  const [showDropdown, setShowDropdown] = useState(false);
-  const [deadlineType, setDeadlineType] = useState<DeadlineType>("Regular Decision");
-  const [deadlineDate, setDeadlineDate] = useState("");
-  const [notes, setNotes] = useState("");
-  const [formError, setFormError] = useState("");
-  const [formSubmitting, setFormSubmitting] = useState(false);
+  const [reminderPrefs, setReminderPrefs] = useState<ReminderPrefs>({
+    email: true,
+    sms: false,
+    phone: "",
+    days: [30, 14, 7, 1],
+  });
 
-  const [colleges, setColleges] = useState<string[]>([]);
-  const [filterType, setFilterType] = useState<string>("All");
-  const [sortPast, setSortPast] = useState(false);
+  const [trackedDeadlines, setTrackedDeadlines] = useState<TrackedDeadline[]>([]);
+  const [tick, setTick] = useState(0);
+  const [filterType, setFilterType] = useState<DeadlineType | "ALL">("ALL");
+  const [showAddSchools, setShowAddSchools] = useState(false);
+  const [addSearchQuery, setAddSearchQuery] = useState("");
+
+  const [savedMessage, setSavedMessage] = useState("");
 
   useEffect(() => {
     fetch("/api/track", {
@@ -82,39 +99,42 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    import("../lib/colleges").then((m) => setColleges(m.COLLEGES));
-  }, []);
-
-  useEffect(() => {
-    const stored = localStorage.getItem("edutracker_email");
+    const stored = localStorage.getItem("edutracker_user");
     if (stored) {
-      setAuth({ email: stored, loading: false, error: null });
-    } else {
-      setAuth({ email: null, loading: false, error: null });
-    }
-  }, []);
-
-  const fetchDeadlines = useCallback(async (email: string) => {
-    setDeadlinesLoading(true);
-    try {
-      const res = await fetch(`/api/deadlines?email=${encodeURIComponent(email)}`);
-      const data = await res.json();
-      if (data.deadlines) setDeadlines(data.deadlines);
-    } catch {
-      // ignore
-    } finally {
-      setDeadlinesLoading(false);
+      try {
+        const u = JSON.parse(stored);
+        setUser(u);
+        loadUserData(u.email);
+        setStep("dashboard");
+      } catch {}
     }
   }, []);
 
   useEffect(() => {
-    if (auth.email) fetchDeadlines(auth.email);
-  }, [auth.email, fetchDeadlines]);
+    const timer = setInterval(() => setTick(t => t + 1), 1000);
+    return () => clearInterval(timer);
+  }, []);
 
-  async function handleAuth(e: React.FormEvent) {
-    e.preventDefault();
-    setAuthSubmitting(true);
-    setAuth((a) => ({ ...a, error: null }));
+  const loadUserData = useCallback((email: string) => {
+    const key = `edutracker_data_${email}`;
+    const stored = localStorage.getItem(key);
+    if (stored) {
+      try {
+        const data = JSON.parse(stored);
+        setTrackedDeadlines(data.deadlines || []);
+        setReminderPrefs(data.reminderPrefs || { email: true, sms: false, phone: "", days: [30, 14, 7, 1] });
+      } catch {}
+    }
+  }, []);
+
+  const saveUserData = useCallback((email: string, deadlines: TrackedDeadline[], prefs: ReminderPrefs) => {
+    const key = `edutracker_data_${email}`;
+    localStorage.setItem(key, JSON.stringify({ deadlines, reminderPrefs: prefs }));
+  }, []);
+
+  const handleAuth = async () => {
+    setAuthLoading(true);
+    setAuthError("");
     try {
       const res = await fetch("/api/auth", {
         method: "POST",
@@ -122,387 +142,800 @@ export default function Home() {
         body: JSON.stringify({ mode: authMode, email: authEmail, password: authPassword }),
       });
       const data = await res.json();
-      if (data.ok) {
-        localStorage.setItem("edutracker_email", data.email);
-        setAuth({ email: data.email, loading: false, error: null });
+      if (data.error) {
+        setAuthError(data.error);
       } else {
-        setAuth((a) => ({ ...a, error: data.error || "Authentication failed" }));
+        const u = { email: data.email };
+        setUser(u);
+        localStorage.setItem("edutracker_user", JSON.stringify(u));
+        const key = `edutracker_data_${u.email}`;
+        const existing = localStorage.getItem(key);
+        if (existing) {
+          loadUserData(u.email);
+          setStep("dashboard");
+        } else {
+          setStep("onboarding-schools");
+        }
       }
     } catch {
-      setAuth((a) => ({ ...a, error: "Network error. Please try again." }));
-    } finally {
-      setAuthSubmitting(false);
+      setAuthError("Network error. Please try again.");
     }
-  }
+    setAuthLoading(false);
+  };
 
-  function handleLogout() {
-    localStorage.removeItem("edutracker_email");
-    setAuth({ email: null, loading: false, error: null });
-    setDeadlines([]);
-  }
-
-  function openAddForm() {
-    setEditingId(null);
-    setCollegeInput("");
-    setCollegeSearch("");
-    setDeadlineType("Regular Decision");
-    setDeadlineDate("");
-    setNotes("");
-    setFormError("");
-    setShowForm(true);
-  }
-
-  function openEditForm(d: Deadline) {
-    setEditingId(d.id);
-    setCollegeInput(d.college_name);
-    setCollegeSearch(d.college_name);
-    setDeadlineType(d.deadline_type);
-    setDeadlineDate(d.deadline_date);
-    setNotes(d.notes || "");
-    setFormError("");
-    setShowForm(true);
-  }
-
-  async function handleFormSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!collegeInput.trim()) { setFormError("Please enter a college name."); return; }
-    if (!deadlineDate) { setFormError("Please select a deadline date."); return; }
-    setFormError("");
-    setFormSubmitting(true);
-    try {
-      const body = {
-        email: auth.email,
-        college_name: collegeInput.trim(),
-        deadline_type: deadlineType,
-        deadline_date: deadlineDate,
-        notes,
-        id: editingId,
-      };
-      const res = await fetch("/api/deadlines", {
-        method: editingId ? "PUT" : "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const data = await res.json();
-      if (data.ok) {
-        setShowForm(false);
-        if (auth.email) fetchDeadlines(auth.email);
+  const handleSchoolToggle = (collegeId: string) => {
+    setSelectedSchools(prev => {
+      if (prev.includes(collegeId)) {
+        const next = prev.filter(id => id !== collegeId);
+        setSelectedDeadlineTypes(dt => {
+          const copy = { ...dt };
+          delete copy[collegeId];
+          return copy;
+        });
+        return next;
       } else {
-        setFormError(data.error || "Failed to save deadline.");
+        const college = COLLEGES.find(c => c.id === collegeId);
+        if (college) {
+          const availableTypes = (["EA", "ED", "ED2", "RD", "FAFSA"] as DeadlineType[]).filter(
+            t => college.deadlines[t]
+          );
+          setSelectedDeadlineTypes(dt => ({ ...dt, [collegeId]: availableTypes }));
+        }
+        return [...prev, collegeId];
       }
-    } catch {
-      setFormError("Network error.");
-    } finally {
-      setFormSubmitting(false);
+    });
+  };
+
+  const toggleDeadlineType = (collegeId: string, type: DeadlineType) => {
+    setSelectedDeadlineTypes(prev => {
+      const current = prev[collegeId] || [];
+      const next = current.includes(type)
+        ? current.filter(t => t !== type)
+        : [...current, type];
+      return { ...prev, [collegeId]: next };
+    });
+  };
+
+  const buildDeadlines = useCallback((schools: string[], types: Record<string, DeadlineType[]>, prefs: ReminderPrefs): TrackedDeadline[] => {
+    const result: TrackedDeadline[] = [];
+    for (const id of schools) {
+      const college = COLLEGES.find(c => c.id === id);
+      if (!college) continue;
+      const selectedTypes = types[id] || [];
+      for (const type of selectedTypes) {
+        const date = college.deadlines[type];
+        if (date) {
+          result.push({
+            collegeId: id,
+            collegeName: college.name,
+            type,
+            date,
+            reminderDays: prefs.days,
+          });
+        }
+      }
     }
-  }
+    return result.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  }, []);
 
-  async function handleDelete(id: number) {
-    if (!confirm("Delete this deadline?")) return;
-    try {
-      await fetch("/api/deadlines", {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, email: auth.email }),
-      });
-      if (auth.email) fetchDeadlines(auth.email);
-    } catch {
-      // ignore
+  const handleOnboardingComplete = () => {
+    if (!user) return;
+    const deadlines = buildDeadlines(selectedSchools, selectedDeadlineTypes, reminderPrefs);
+    setTrackedDeadlines(deadlines);
+    saveUserData(user.email, deadlines, reminderPrefs);
+    setStep("dashboard");
+    setSavedMessage("Your deadlines have been saved! ✓");
+    setTimeout(() => setSavedMessage(""), 3000);
+  };
+
+  const handleAddSchoolsToDashboard = () => {
+    if (!user) return;
+    const existing = trackedDeadlines;
+    const existingKeys = new Set(existing.map(d => `${d.collegeId}-${d.type}`));
+    const newOnes: TrackedDeadline[] = [];
+    for (const id of selectedSchools) {
+      const college = COLLEGES.find(c => c.id === id);
+      if (!college) continue;
+      const types = selectedDeadlineTypes[id] || [];
+      for (const type of types) {
+        const key = `${id}-${type}`;
+        if (!existingKeys.has(key)) {
+          const date = college.deadlines[type];
+          if (date) {
+            newOnes.push({ collegeId: id, collegeName: college.name, type, date, reminderDays: reminderPrefs.days });
+          }
+        }
+      }
     }
-  }
+    const merged = [...existing, ...newOnes].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    setTrackedDeadlines(merged);
+    saveUserData(user.email, merged, reminderPrefs);
+    setShowAddSchools(false);
+    setSelectedSchools([]);
+    setSelectedDeadlineTypes({});
+    setAddSearchQuery("");
+    setSavedMessage(`Added ${newOnes.length} new deadline(s)! ✓`);
+    setTimeout(() => setSavedMessage(""), 3000);
+  };
 
-  const filteredColleges = colleges.filter((c) =>
-    c.toLowerCase().includes(collegeSearch.toLowerCase())
-  ).slice(0, 10);
+  const handleRemoveDeadline = (collegeId: string, type: DeadlineType) => {
+    if (!user) return;
+    const updated = trackedDeadlines.filter(d => !(d.collegeId === collegeId && d.type === type));
+    setTrackedDeadlines(updated);
+    saveUserData(user.email, updated, reminderPrefs);
+  };
 
-  const displayDeadlines = deadlines
-    .filter((d) => filterType === "All" || d.deadline_type === filterType)
-    .filter((d) => sortPast || daysUntil(d.deadline_date) >= 0)
-    .sort((a, b) => a.deadline_date.localeCompare(b.deadline_date));
+  const handleSaveReminders = () => {
+    if (!user) return;
+    const updated = trackedDeadlines.map(d => ({ ...d, reminderDays: reminderPrefs.days }));
+    setTrackedDeadlines(updated);
+    saveUserData(user.email, updated, reminderPrefs);
+    setSavedMessage("Reminder preferences saved! ✓");
+    setTimeout(() => setSavedMessage(""), 3000);
+  };
 
-  if (auth.loading) {
+  const handleLogout = () => {
+    localStorage.removeItem("edutracker_user");
+    setUser(null);
+    setTrackedDeadlines([]);
+    setSelectedSchools([]);
+    setSelectedDeadlineTypes({});
+    setStep("landing");
+  };
+
+  const filteredColleges = COLLEGES.filter(c =>
+    c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    c.location.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  const filteredAddColleges = COLLEGES.filter(c =>
+    c.name.toLowerCase().includes(addSearchQuery.toLowerCase()) ||
+    c.location.toLowerCase().includes(addSearchQuery.toLowerCase())
+  );
+
+  const displayedDeadlines = filterType === "ALL"
+    ? trackedDeadlines
+    : trackedDeadlines.filter(d => d.type === filterType);
+
+  const upcomingCount = trackedDeadlines.filter(d => !getTimeUntil(d.date).past).length;
+  const urgentCount = trackedDeadlines.filter(d => {
+    const t = getTimeUntil(d.date);
+    return !t.past && t.days <= 7;
+  }).length;
+
+  // ---- LANDING PAGE ----
+  if (step === "landing") {
     return (
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", background: "#f8fafc" }}>
-        <div style={{ fontSize: 18, color: "#64748b" }}>Loading…</div>
+      <div style={{ minHeight: "100vh", background: "linear-gradient(135deg, #1e1b4b 0%, #312e81 50%, #1e3a5f 100%)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "2rem", fontFamily: "'Segoe UI', system-ui, sans-serif" }}>
+        <div style={{ maxWidth: 600, width: "100%", textAlign: "center" }}>
+          <div style={{ fontSize: "4rem", marginBottom: "1rem" }}>🎓</div>
+          <h1 style={{ fontSize: "3rem", fontWeight: 800, color: "white", marginBottom: "0.5rem", lineHeight: 1.1 }}>
+            Edu<span style={{ color: "#818cf8" }}>tracker</span>
+          </h1>
+          <p style={{ fontSize: "1.25rem", color: "#c7d2fe", marginBottom: "2rem", lineHeight: 1.6 }}>
+            Never miss a college application deadline.<br />
+            Track EA, ED, RD & FAFSA deadlines for 80+ top schools.
+          </p>
+          <div style={{ display: "flex", gap: "1rem", justifyContent: "center", flexWrap: "wrap", marginBottom: "3rem" }}>
+            {["80+ Top Colleges", "Countdown Timers", "Smart Reminders", "Free to Use"].map(f => (
+              <span key={f} style={{ background: "rgba(255,255,255,0.1)", color: "#e0e7ff", padding: "0.4rem 1rem", borderRadius: "2rem", fontSize: "0.875rem", fontWeight: 500 }}>{f}</span>
+            ))}
+          </div>
+          <button
+            onClick={() => setStep("auth")}
+            style={{ background: "linear-gradient(135deg, #6366f1, #8b5cf6)", color: "white", border: "none", padding: "1rem 3rem", borderRadius: "3rem", fontSize: "1.1rem", fontWeight: 700, cursor: "pointer", boxShadow: "0 4px 20px rgba(99,102,241,0.5)", transition: "transform 0.15s" }}
+            onMouseEnter={e => (e.currentTarget.style.transform = "scale(1.05)")}
+            onMouseLeave={e => (e.currentTarget.style.transform = "scale(1)")}
+          >
+            Get Started Free →
+          </button>
+        </div>
       </div>
     );
   }
 
-  if (!auth.email) {
+  // ---- AUTH ----
+  if (step === "auth") {
     return (
-      <div style={{ minHeight: "100vh", background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-        <div style={{ background: "white", borderRadius: 16, padding: "40px 36px", width: "100%", maxWidth: 420, boxShadow: "0 20px 60px rgba(0,0,0,0.15)" }}>
-          <div style={{ textAlign: "center", marginBottom: 28 }}>
-            <div style={{ fontSize: 40 }}>🎓</div>
-            <h1 style={{ fontSize: 26, fontWeight: 700, color: "#1e293b", margin: "8px 0 4px" }}>Edutracker</h1>
-            <p style={{ color: "#64748b", fontSize: 14, margin: 0 }}>Never miss a college application deadline</p>
+      <div style={{ minHeight: "100vh", background: "linear-gradient(135deg, #1e1b4b 0%, #312e81 50%, #1e3a5f 100%)", display: "flex", alignItems: "center", justifyContent: "center", padding: "2rem", fontFamily: "'Segoe UI', system-ui, sans-serif" }}>
+        <div style={{ background: "white", borderRadius: "1.5rem", padding: "2.5rem", maxWidth: 420, width: "100%", boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
+          <div style={{ textAlign: "center", marginBottom: "2rem" }}>
+            <div style={{ fontSize: "2.5rem", marginBottom: "0.5rem" }}>🎓</div>
+            <h2 style={{ fontSize: "1.75rem", fontWeight: 800, color: "#1e1b4b", margin: 0 }}>
+              {authMode === "signup" ? "Create Account" : "Welcome Back"}
+            </h2>
+            <p style={{ color: "#6b7280", marginTop: "0.5rem", fontSize: "0.95rem" }}>
+              {authMode === "signup" ? "Start tracking your deadlines today" : "Sign in to your Edutracker"}
+            </p>
           </div>
-
-          <div style={{ display: "flex", background: "#f1f5f9", borderRadius: 8, padding: 4, marginBottom: 24 }}>
-            {(["login", "signup"] as const).map((mode) => (
+          <div style={{ display: "flex", background: "#f3f4f6", borderRadius: "0.75rem", padding: "0.25rem", marginBottom: "1.5rem" }}>
+            {(["signup", "login"] as const).map(mode => (
               <button
                 key={mode}
-                onClick={() => { setAuthMode(mode); setAuth((a) => ({ ...a, error: null })); }}
-                style={{
-                  flex: 1, padding: "8px 0", borderRadius: 6, border: "none", cursor: "pointer",
-                  background: authMode === mode ? "white" : "transparent",
-                  color: authMode === mode ? "#1e293b" : "#64748b",
-                  fontWeight: authMode === mode ? 600 : 400,
-                  fontSize: 14,
-                  boxShadow: authMode === mode ? "0 1px 4px rgba(0,0,0,0.1)" : "none",
-                  transition: "all 0.2s",
-                }}
+                onClick={() => { setAuthMode(mode); setAuthError(""); }}
+                style={{ flex: 1, padding: "0.6rem", borderRadius: "0.5rem", border: "none", fontWeight: 600, fontSize: "0.9rem", cursor: "pointer", background: authMode === mode ? "white" : "transparent", color: authMode === mode ? "#4f46e5" : "#6b7280", boxShadow: authMode === mode ? "0 1px 3px rgba(0,0,0,0.15)" : "none", transition: "all 0.15s" }}
               >
-                {mode === "login" ? "Log In" : "Sign Up"}
+                {mode === "signup" ? "Sign Up" : "Log In"}
               </button>
             ))}
           </div>
-
-          <form onSubmit={handleAuth}>
-            <label style={labelStyle}>Email</label>
+          <div style={{ marginBottom: "1rem" }}>
+            <label style={{ display: "block", fontWeight: 600, color: "#374151", marginBottom: "0.4rem", fontSize: "0.9rem" }}>Email</label>
             <input
-              type="email" required value={authEmail}
-              onChange={(e) => setAuthEmail(e.target.value)}
-              placeholder="you@email.com"
-              style={inputStyle}
+              type="email"
+              value={authEmail}
+              onChange={e => setAuthEmail(e.target.value)}
+              placeholder="you@example.com"
+              style={{ width: "100%", padding: "0.75rem 1rem", border: "1.5px solid #d1d5db", borderRadius: "0.75rem", fontSize: "1rem", outline: "none", boxSizing: "border-box", transition: "border-color 0.15s" }}
+              onFocus={e => (e.target.style.borderColor = "#6366f1")}
+              onBlur={e => (e.target.style.borderColor = "#d1d5db")}
+              onKeyDown={e => e.key === "Enter" && handleAuth()}
             />
-            <label style={{ ...labelStyle, marginTop: 14 }}>Password</label>
+          </div>
+          <div style={{ marginBottom: "1.5rem" }}>
+            <label style={{ display: "block", fontWeight: 600, color: "#374151", marginBottom: "0.4rem", fontSize: "0.9rem" }}>Password</label>
             <input
-              type="password" required value={authPassword}
-              onChange={(e) => setAuthPassword(e.target.value)}
+              type="password"
+              value={authPassword}
+              onChange={e => setAuthPassword(e.target.value)}
               placeholder="••••••••"
-              style={inputStyle}
+              style={{ width: "100%", padding: "0.75rem 1rem", border: "1.5px solid #d1d5db", borderRadius: "0.75rem", fontSize: "1rem", outline: "none", boxSizing: "border-box" }}
+              onFocus={e => (e.target.style.borderColor = "#6366f1")}
+              onBlur={e => (e.target.style.borderColor = "#d1d5db")}
+              onKeyDown={e => e.key === "Enter" && handleAuth()}
             />
-            {auth.error && (
-              <div style={{ background: "#fef2f2", color: "#dc2626", borderRadius: 8, padding: "10px 14px", fontSize: 13, marginTop: 12 }}>
-                {auth.error}
-              </div>
-            )}
-            <button
-              type="submit" disabled={authSubmitting}
-              style={{ ...btnPrimary, width: "100%", marginTop: 20, opacity: authSubmitting ? 0.7 : 1 }}
-            >
-              {authSubmitting ? "Please wait…" : authMode === "login" ? "Log In" : "Create Account"}
-            </button>
-          </form>
+          </div>
+          {authError && (
+            <div style={{ background: "#fef2f2", border: "1px solid #fecaca", color: "#dc2626", padding: "0.75rem 1rem", borderRadius: "0.75rem", marginBottom: "1rem", fontSize: "0.9rem" }}>
+              {authError}
+            </div>
+          )}
+          <button
+            onClick={handleAuth}
+            disabled={authLoading || !authEmail || !authPassword}
+            style={{ width: "100%", padding: "0.875rem", background: authLoading || !authEmail || !authPassword ? "#e5e7eb" : "linear-gradient(135deg, #6366f1, #8b5cf6)", color: authLoading || !authEmail || !authPassword ? "#9ca3af" : "white", border: "none", borderRadius: "0.75rem", fontSize: "1rem", fontWeight: 700, cursor: authLoading || !authEmail || !authPassword ? "not-allowed" : "pointer", transition: "all 0.15s" }}
+          >
+            {authLoading ? "Please wait..." : authMode === "signup" ? "Create Account →" : "Sign In →"}
+          </button>
+          <button
+            onClick={() => setStep("landing")}
+            style={{ width: "100%", marginTop: "0.75rem", padding: "0.75rem", background: "transparent", border: "none", color: "#6b7280", cursor: "pointer", fontSize: "0.9rem" }}
+          >
+            ← Back
+          </button>
         </div>
       </div>
     );
   }
 
-  return (
-    <div style={{ minHeight: "100vh", background: "#f8fafc" }}>
-      {/* Header */}
-      <header style={{ background: "white", borderBottom: "1px solid #e2e8f0", padding: "0 24px", display: "flex", alignItems: "center", justifyContent: "space-between", height: 64 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ fontSize: 24 }}>🎓</span>
-          <span style={{ fontSize: 20, fontWeight: 700, color: "#1e293b" }}>Edutracker</span>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-          <span style={{ fontSize: 14, color: "#64748b" }}>{auth.email}</span>
-          <button onClick={handleLogout} style={btnSecondary}>Log Out</button>
-        </div>
-      </header>
-
-      <main style={{ maxWidth: 900, margin: "0 auto", padding: "32px 20px" }}>
-        {/* Stats bar */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 16, marginBottom: 28 }}>
-          {[
-            { label: "Total Deadlines", value: deadlines.length, icon: "📋" },
-            { label: "Urgent (<7 days)", value: deadlines.filter(d => { const x = daysUntil(d.deadline_date); return x >= 0 && x < 7; }).length, icon: "🔴" },
-            { label: "Coming Up (<30d)", value: deadlines.filter(d => { const x = daysUntil(d.deadline_date); return x >= 7 && x < 30; }).length, icon: "🟡" },
-            { label: "Colleges Tracked", value: new Set(deadlines.map(d => d.college_name)).size, icon: "🏫" },
-          ].map((stat) => (
-            <div key={stat.label} style={{ background: "white", borderRadius: 12, padding: "18px 20px", boxShadow: "0 1px 4px rgba(0,0,0,0.06)", border: "1px solid #e2e8f0" }}>
-              <div style={{ fontSize: 22 }}>{stat.icon}</div>
-              <div style={{ fontSize: 26, fontWeight: 700, color: "#1e293b", margin: "4px 0 2px" }}>{stat.value}</div>
-              <div style={{ fontSize: 12, color: "#64748b" }}>{stat.label}</div>
-            </div>
-          ))}
-        </div>
-
-        {/* Controls */}
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", marginBottom: 20 }}>
-          <button onClick={openAddForm} style={btnPrimary}>
-            + Add Deadline
-          </button>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {["All", ...DEADLINE_TYPES].map((t) => (
-              <button
-                key={t}
-                onClick={() => setFilterType(t)}
-                style={{
-                  padding: "6px 14px", borderRadius: 20, border: "1px solid #e2e8f0", fontSize: 13,
-                  background: filterType === t ? "#1e293b" : "white",
-                  color: filterType === t ? "white" : "#475569",
-                  cursor: "pointer", fontWeight: filterType === t ? 600 : 400,
-                }}
-              >
-                {t}
-              </button>
+  // ---- ONBOARDING: SELECT SCHOOLS ----
+  if (step === "onboarding-schools") {
+    return (
+      <div style={{ minHeight: "100vh", background: "#f8fafc", fontFamily: "'Segoe UI', system-ui, sans-serif" }}>
+        <div style={{ background: "linear-gradient(135deg, #1e1b4b, #312e81)", padding: "1.5rem 2rem", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+            <span style={{ fontSize: "1.75rem" }}>🎓</span>
+            <span style={{ color: "white", fontWeight: 800, fontSize: "1.25rem" }}>Edutracker</span>
+          </div>
+          <div style={{ display: "flex", gap: "0.5rem" }}>
+            {["Schools", "Reminders"].map((s, i) => (
+              <div key={s} style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+                <div style={{ width: 28, height: 28, borderRadius: "50%", background: i === 0 ? "#6366f1" : "rgba(255,255,255,0.2)", color: "white", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: "0.8rem" }}>{i + 1}</div>
+                <span style={{ color: i === 0 ? "white" : "rgba(255,255,255,0.5)", fontSize: "0.85rem", fontWeight: 600 }}>{s}</span>
+                {i < 1 && <span style={{ color: "rgba(255,255,255,0.3)", margin: "0 0.25rem" }}>›</span>}
+              </div>
             ))}
           </div>
-          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "#64748b", cursor: "pointer", marginLeft: "auto" }}>
-            <input type="checkbox" checked={sortPast} onChange={e => setSortPast(e.target.checked)} />
-            Show past deadlines
-          </label>
         </div>
-
-        {/* Deadline list */}
-        {deadlinesLoading ? (
-          <div style={{ textAlign: "center", padding: 60, color: "#94a3b8" }}>Loading deadlines…</div>
-        ) : displayDeadlines.length === 0 ? (
-          <div style={{ textAlign: "center", padding: 80, background: "white", borderRadius: 16, border: "1px dashed #cbd5e1" }}>
-            <div style={{ fontSize: 48, marginBottom: 12 }}>📅</div>
-            <p style={{ color: "#64748b", fontSize: 16, margin: 0 }}>No deadlines yet. Click <strong>"+ Add Deadline"</strong> to get started.</p>
+        <div style={{ maxWidth: 900, margin: "0 auto", padding: "2rem 1rem" }}>
+          <div style={{ marginBottom: "1.5rem" }}>
+            <h2 style={{ fontSize: "1.75rem", fontWeight: 800, color: "#1e1b4b", margin: "0 0 0.5rem" }}>Select Your Target Schools</h2>
+            <p style={{ color: "#6b7280", margin: 0 }}>Choose the colleges you&apos;re applying to and which deadlines to track.</p>
           </div>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            {displayDeadlines.map((d) => {
-              const days = daysUntil(d.deadline_date);
-              const urg = urgencyColor(days);
-              const typeColor = TYPE_COLORS[d.deadline_type];
+          <div style={{ position: "relative", marginBottom: "1.5rem" }}>
+            <span style={{ position: "absolute", left: "1rem", top: "50%", transform: "translateY(-50%)", fontSize: "1.1rem" }}>🔍</span>
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              placeholder="Search colleges by name or location..."
+              style={{ width: "100%", padding: "0.875rem 1rem 0.875rem 2.75rem", border: "1.5px solid #e5e7eb", borderRadius: "0.875rem", fontSize: "1rem", outline: "none", background: "white", boxSizing: "border-box", boxShadow: "0 1px 4px rgba(0,0,0,0.06)" }}
+            />
+          </div>
+          {selectedSchools.length > 0 && (
+            <div style={{ background: "#eef2ff", border: "1px solid #c7d2fe", borderRadius: "0.75rem", padding: "0.75rem 1rem", marginBottom: "1rem", fontSize: "0.9rem", color: "#4f46e5", fontWeight: 500 }}>
+              ✓ {selectedSchools.length} school{selectedSchools.length !== 1 ? "s" : ""} selected
+            </div>
+          )}
+          <div style={{ display: "grid", gap: "0.75rem", marginBottom: "2rem" }}>
+            {filteredColleges.map(college => {
+              const isSelected = selectedSchools.includes(college.id);
+              const selectedTypes = selectedDeadlineTypes[college.id] || [];
+              const availableTypes = (["EA", "ED", "ED2", "RD", "FAFSA"] as DeadlineType[]).filter(t => college.deadlines[t]);
               return (
-                <div key={d.id} style={{
-                  background: "white", borderRadius: 12, padding: "18px 20px",
-                  border: `1px solid #e2e8f0`, borderLeft: `4px solid ${typeColor}`,
-                  boxShadow: "0 1px 4px rgba(0,0,0,0.05)",
-                  display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap",
-                }}>
-                  <div style={{ flex: 1, minWidth: 200 }}>
-                    <div style={{ fontWeight: 700, fontSize: 16, color: "#1e293b" }}>{d.college_name}</div>
-                    <div style={{ display: "flex", gap: 8, marginTop: 4, flexWrap: "wrap", alignItems: "center" }}>
-                      <span style={{
-                        display: "inline-block", padding: "2px 10px", borderRadius: 20,
-                        background: typeColor + "18", color: typeColor, fontSize: 12, fontWeight: 600,
-                      }}>{d.deadline_type}</span>
-                      {d.notes && <span style={{ fontSize: 12, color: "#94a3b8" }}>📝 {d.notes}</span>}
+                <div
+                  key={college.id}
+                  style={{ background: "white", borderRadius: "1rem", border: `2px solid ${isSelected ? "#6366f1" : "#e5e7eb"}`, padding: "1rem 1.25rem", transition: "all 0.15s", boxShadow: isSelected ? "0 2px 12px rgba(99,102,241,0.15)" : "0 1px 4px rgba(0,0,0,0.05)" }}
+                >
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: "1rem" }}>
+                    <div
+                      onClick={() => handleSchoolToggle(college.id)}
+                      style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${isSelected ? "#6366f1" : "#d1d5db"}`, background: isSelected ? "#6366f1" : "white", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, marginTop: "0.15rem", transition: "all 0.15s" }}
+                    >
+                      {isSelected && <span style={{ color: "white", fontSize: "0.75rem", fontWeight: 700 }}>✓</span>}
                     </div>
-                  </div>
-                  <div style={{ textAlign: "center" }}>
-                    <div style={{ fontSize: 14, fontWeight: 600, color: "#1e293b" }}>
-                      {new Date(d.deadline_date + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                    <div style={{ flex: 1 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap", cursor: "pointer" }} onClick={() => handleSchoolToggle(college.id)}>
+                        <span style={{ fontWeight: 700, color: "#1e1b4b", fontSize: "1rem" }}>{college.name}</span>
+                        <span style={{ color: "#9ca3af", fontSize: "0.85rem" }}>{college.location}</span>
+                        {college.rank && <span style={{ background: "#fef3c7", color: "#92400e", padding: "0.15rem 0.5rem", borderRadius: "1rem", fontSize: "0.75rem", fontWeight: 600 }}>#{college.rank}</span>}
+                      </div>
+                      {isSelected && (
+                        <div style={{ marginTop: "0.75rem", display: "flex", flexWrap: "wrap", gap: "0.5rem" }}>
+                          {availableTypes.map(type => (
+                            <button
+                              key={type}
+                              onClick={() => toggleDeadlineType(college.id, type)}
+                              style={{ padding: "0.3rem 0.75rem", borderRadius: "2rem", border: `1.5px solid ${selectedTypes.includes(type) ? deadlineTypeColor(type) : "#e5e7eb"}`, background: selectedTypes.includes(type) ? deadlineTypeColor(type) : "white", color: selectedTypes.includes(type) ? "white" : "#6b7280", fontSize: "0.8rem", fontWeight: 600, cursor: "pointer", transition: "all 0.15s" }}
+                            >
+                              {type} · {college.deadlines[type]}
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                    <div style={{
-                      display: "inline-block", marginTop: 4, padding: "3px 10px", borderRadius: 20,
-                      background: urg.bg, color: urg.text, fontSize: 12, fontWeight: 600,
-                    }}>
-                      {days < 0 ? `${Math.abs(days)}d ago` : days === 0 ? "Today!" : `${days}d left — ${urg.label}`}
-                    </div>
-                  </div>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <button onClick={() => openEditForm(d)} style={btnSecondary}>Edit</button>
-                    <button onClick={() => handleDelete(d.id)} style={{ ...btnSecondary, color: "#dc2626", borderColor: "#fca5a5" }}>Delete</button>
                   </div>
                 </div>
               );
             })}
           </div>
-        )}
-      </main>
+          <div style={{ position: "sticky", bottom: "1rem", display: "flex", justifyContent: "flex-end" }}>
+            <button
+              onClick={() => setStep("onboarding-reminders")}
+              disabled={selectedSchools.length === 0}
+              style={{ padding: "0.875rem 2.5rem", background: selectedSchools.length === 0 ? "#e5e7eb" : "linear-gradient(135deg, #6366f1, #8b5cf6)", color: selectedSchools.length === 0 ? "#9ca3af" : "white", border: "none", borderRadius: "2rem", fontSize: "1rem", fontWeight: 700, cursor: selectedSchools.length === 0 ? "not-allowed" : "pointer", boxShadow: selectedSchools.length > 0 ? "0 4px 15px rgba(99,102,241,0.4)" : "none", transition: "all 0.15s" }}
+            >
+              Continue → Set Up Reminders
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
-      {/* Modal */}
-      {showForm && (
-        <div style={{
-          position: "fixed", inset: 0, background: "rgba(15,23,42,0.5)", zIndex: 50,
-          display: "flex", alignItems: "center", justifyContent: "center", padding: 20,
-        }} onClick={(e) => { if (e.target === e.currentTarget) setShowForm(false); }}>
-          <div style={{ background: "white", borderRadius: 16, padding: "32px 28px", width: "100%", maxWidth: 480, boxShadow: "0 24px 64px rgba(0,0,0,0.2)" }}>
-            <h2 style={{ margin: "0 0 24px", fontSize: 20, fontWeight: 700, color: "#1e293b" }}>
-              {editingId ? "Edit Deadline" : "Add Deadline"}
-            </h2>
-            <form onSubmit={handleFormSubmit}>
-              <label style={labelStyle}>College Name</label>
-              <div style={{ position: "relative" }}>
-                <input
-                  type="text"
-                  value={collegeInput}
-                  onChange={(e) => {
-                    setCollegeInput(e.target.value);
-                    setCollegeSearch(e.target.value);
-                    setShowDropdown(true);
-                  }}
-                  onFocus={() => setShowDropdown(true)}
-                  onBlur={() => setTimeout(() => setShowDropdown(false), 150)}
-                  placeholder="Search or type a college name…"
-                  style={inputStyle}
-                  autoComplete="off"
-                />
-                {showDropdown && collegeSearch.length > 0 && filteredColleges.length > 0 && (
-                  <div style={{
-                    position: "absolute", top: "100%", left: 0, right: 0, background: "white",
-                    border: "1px solid #e2e8f0", borderRadius: 8, boxShadow: "0 4px 16px rgba(0,0,0,0.1)",
-                    zIndex: 100, maxHeight: 220, overflowY: "auto",
-                  }}>
-                    {filteredColleges.map((c) => (
-                      <div
-                        key={c}
-                        onMouseDown={() => { setCollegeInput(c); setCollegeSearch(c); setShowDropdown(false); }}
-                        style={{ padding: "10px 14px", cursor: "pointer", fontSize: 14, color: "#1e293b", borderBottom: "1px solid #f1f5f9" }}
-                        onMouseEnter={e => (e.currentTarget.style.background = "#f8fafc")}
-                        onMouseLeave={e => (e.currentTarget.style.background = "white")}
-                      >
-                        {c}
-                      </div>
-                    ))}
-                  </div>
-                )}
+  // ---- ONBOARDING: REMINDERS ----
+  if (step === "onboarding-reminders") {
+    return (
+      <div style={{ minHeight: "100vh", background: "#f8fafc", fontFamily: "'Segoe UI', system-ui, sans-serif" }}>
+        <div style={{ background: "linear-gradient(135deg, #1e1b4b, #312e81)", padding: "1.5rem 2rem", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+            <span style={{ fontSize: "1.75rem" }}>🎓</span>
+            <span style={{ color: "white", fontWeight: 800, fontSize: "1.25rem" }}>Edutracker</span>
+          </div>
+          <div style={{ display: "flex", gap: "0.5rem" }}>
+            {["Schools", "Reminders"].map((s, i) => (
+              <div key={s} style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+                <div style={{ width: 28, height: 28, borderRadius: "50%", background: i <= 1 ? "#6366f1" : "rgba(255,255,255,0.2)", color: "white", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: "0.8rem" }}>{i + 1}</div>
+                <span style={{ color: i <= 1 ? "white" : "rgba(255,255,255,0.5)", fontSize: "0.85rem", fontWeight: 600 }}>{s}</span>
+                {i < 1 && <span style={{ color: "rgba(255,255,255,0.3)", margin: "0 0.25rem" }}>›</span>}
               </div>
+            ))}
+          </div>
+        </div>
+        <div style={{ maxWidth: 600, margin: "0 auto", padding: "2rem 1rem" }}>
+          <h2 style={{ fontSize: "1.75rem", fontWeight: 800, color: "#1e1b4b", marginBottom: "0.5rem" }}>Set Up Reminders</h2>
+          <p style={{ color: "#6b7280", marginBottom: "2rem" }}>We&apos;ll remind you before each deadline so you never miss one.</p>
 
-              <label style={{ ...labelStyle, marginTop: 16 }}>Deadline Type</label>
-              <select value={deadlineType} onChange={e => setDeadlineType(e.target.value as DeadlineType)} style={inputStyle}>
-                {DEADLINE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-              </select>
-
-              <label style={{ ...labelStyle, marginTop: 16 }}>Deadline Date</label>
-              <input type="date" value={deadlineDate} onChange={e => setDeadlineDate(e.target.value)} style={inputStyle} required />
-
-              <label style={{ ...labelStyle, marginTop: 16 }}>Notes (optional)</label>
-              <textarea
-                value={notes}
-                onChange={e => setNotes(e.target.value)}
-                placeholder="Any notes about this deadline…"
-                rows={2}
-                style={{ ...inputStyle, resize: "vertical" as const }}
-              />
-
-              {formError && (
-                <div style={{ background: "#fef2f2", color: "#dc2626", borderRadius: 8, padding: "10px 14px", fontSize: 13, marginTop: 12 }}>
-                  {formError}
+          <div style={{ background: "white", borderRadius: "1.25rem", padding: "1.5rem", marginBottom: "1.25rem", boxShadow: "0 1px 4px rgba(0,0,0,0.06)" }}>
+            <h3 style={{ fontWeight: 700, color: "#1e1b4b", margin: "0 0 1rem", fontSize: "1.05rem" }}>📧 Notification Channels</h3>
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+              <label style={{ display: "flex", alignItems: "center", gap: "0.75rem", cursor: "pointer" }}>
+                <div
+                  onClick={() => setReminderPrefs(p => ({ ...p, email: !p.email }))}
+                  style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${reminderPrefs.email ? "#6366f1" : "#d1d5db"}`, background: reminderPrefs.email ? "#6366f1" : "white", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}
+                >
+                  {reminderPrefs.email && <span style={{ color: "white", fontSize: "0.75rem" }}>✓</span>}
                 </div>
-              )}
+                <div>
+                  <div style={{ fontWeight: 600, color: "#374151" }}>Email Reminders</div>
+                  <div style={{ fontSize: "0.85rem", color: "#9ca3af" }}>Sent to {user?.email}</div>
+                </div>
+              </label>
+              <label style={{ display: "flex", alignItems: "flex-start", gap: "0.75rem", cursor: "pointer" }}>
+                <div
+                  onClick={() => setReminderPrefs(p => ({ ...p, sms: !p.sms }))}
+                  style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${reminderPrefs.sms ? "#6366f1" : "#d1d5db"}`, background: reminderPrefs.sms ? "#6366f1" : "white", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, marginTop: "0.2rem" }}
+                >
+                  {reminderPrefs.sms && <span style={{ color: "white", fontSize: "0.75rem" }}>✓</span>}
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 600, color: "#374151" }}>SMS Reminders</div>
+                  {reminderPrefs.sms && (
+                    <input
+                      type="tel"
+                      value={reminderPrefs.phone}
+                      onChange={e => setReminderPrefs(p => ({ ...p, phone: e.target.value }))}
+                      placeholder="+1 (555) 000-0000"
+                      style={{ marginTop: "0.5rem", width: "100%", padding: "0.6rem 0.875rem", border: "1.5px solid #e5e7eb", borderRadius: "0.625rem", fontSize: "0.9rem", outline: "none", boxSizing: "border-box" }}
+                    />
+                  )}
+                </div>
+              </label>
+            </div>
+          </div>
 
-              <div style={{ display: "flex", gap: 12, marginTop: 24 }}>
-                <button type="button" onClick={() => setShowForm(false)} style={{ ...btnSecondary, flex: 1 }}>Cancel</button>
-                <button type="submit" disabled={formSubmitting} style={{ ...btnPrimary, flex: 2, opacity: formSubmitting ? 0.7 : 1 }}>
-                  {formSubmitting ? "Saving…" : editingId ? "Save Changes" : "Add Deadline"}
+          <div style={{ background: "white", borderRadius: "1.25rem", padding: "1.5rem", marginBottom: "1.25rem", boxShadow: "0 1px 4px rgba(0,0,0,0.06)" }}>
+            <h3 style={{ fontWeight: 700, color: "#1e1b4b", margin: "0 0 1rem", fontSize: "1.05rem" }}>⏰ Remind Me Before Deadline</h3>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
+              {REMINDER_OPTIONS.map(opt => (
+                <label
+                  key={opt.value}
+                  onClick={() => setReminderPrefs(p => ({
+                    ...p,
+                    days: p.days.includes(opt.value) ? p.days.filter(d => d !== opt.value) : [...p.days, opt.value]
+                  }))}
+                  style={{ display: "flex", alignItems: "center", gap: "0.75rem", padding: "0.875rem 1rem", borderRadius: "0.75rem", border: `1.5px solid ${reminderPrefs.days.includes(opt.value) ? "#6366f1" : "#e5e7eb"}`, background: reminderPrefs.days.includes(opt.value) ? "#eef2ff" : "white", cursor: "pointer", transition: "all 0.15s" }}
+                >
+                  <div style={{ width: 18, height: 18, borderRadius: 4, border: `2px solid ${reminderPrefs.days.includes(opt.value) ? "#6366f1" : "#d1d5db"}`, background: reminderPrefs.days.includes(opt.value) ? "#6366f1" : "white", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    {reminderPrefs.days.includes(opt.value) && <span style={{ color: "white", fontSize: "0.65rem" }}>✓</span>}
+                  </div>
+                  <span style={{ fontWeight: 600, color: reminderPrefs.days.includes(opt.value) ? "#4f46e5" : "#374151", fontSize: "0.9rem" }}>{opt.label}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: "1rem", padding: "1rem 1.25rem", marginBottom: "2rem" }}>
+            <div style={{ fontWeight: 600, color: "#15803d", marginBottom: "0.5rem", fontSize: "0.95rem" }}>📋 Your Summary</div>
+            <div style={{ color: "#166534", fontSize: "0.875rem", lineHeight: 1.6 }}>
+              Tracking <strong>{selectedSchools.length} school{selectedSchools.length !== 1 ? "s" : ""}</strong> with{" "}
+              <strong>{Object.values(selectedDeadlineTypes).flat().length} deadline{Object.values(selectedDeadlineTypes).flat().length !== 1 ? "s" : ""}</strong>.<br />
+              Reminders via {[reminderPrefs.email && "email", reminderPrefs.sms && "SMS"].filter(Boolean).join(" & ") || "none"} at{" "}
+              {reminderPrefs.days.sort((a, b) => b - a).map(d => `${d} day${d !== 1 ? "s" : ""}`).join(", ")} before each deadline.
+            </div>
+          </div>
+
+          <div style={{ display: "flex", gap: "1rem" }}>
+            <button
+              onClick={() => setStep("onboarding-schools")}
+              style={{ padding: "0.875rem 1.5rem", background: "white", border: "1.5px solid #e5e7eb", borderRadius: "2rem", fontSize: "0.95rem", fontWeight: 600, cursor: "pointer", color: "#374151" }}
+            >
+              ← Back
+            </button>
+            <button
+              onClick={handleOnboardingComplete}
+              style={{ flex: 1, padding: "0.875rem 2rem", background: "linear-gradient(135deg, #6366f1, #8b5cf6)", color: "white", border: "none", borderRadius: "2rem", fontSize: "1rem", fontWeight: 700, cursor: "pointer", boxShadow: "0 4px 15px rgba(99,102,241,0.4)" }}
+            >
+              Launch My Dashboard 🚀
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ---- DASHBOARD ----
+  return (
+    <div style={{ minHeight: "100vh", background: "#f1f5f9", fontFamily: "'Segoe UI', system-ui, sans-serif" }}>
+      {/* NAVBAR */}
+      <div style={{ background: "linear-gradient(135deg, #1e1b4b, #312e81)", padding: "1rem 2rem", display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 100, boxShadow: "0 2px 12px rgba(0,0,0,0.2)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+          <span style={{ fontSize: "1.5rem" }}>🎓</span>
+          <span style={{ color: "white", fontWeight: 800, fontSize: "1.2rem" }}>Edutracker</span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
+          {savedMessage && (
+            <span style={{ background: "rgba(16,185,129,0.2)", color: "#34d399", padding: "0.4rem 0.875rem", borderRadius: "2rem", fontSize: "0.85rem", fontWeight: 600 }}>{savedMessage}</span>
+          )}
+          <span style={{ color: "rgba(255,255,255,0.7)", fontSize: "0.875rem" }}>{user?.email}</span>
+          <button
+            onClick={handleLogout}
+            style={{ background: "rgba(255,255,255,0.1)", color: "white", border: "none", padding: "0.4rem 1rem", borderRadius: "1rem", cursor: "pointer", fontSize: "0.85rem", fontWeight: 500 }}
+          >
+            Log Out
+          </button>
+        </div>
+      </div>
+
+      <div style={{ maxWidth: 1100, margin: "0 auto", padding: "2rem 1rem" }}>
+        {/* STATS ROW */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "1rem", marginBottom: "2rem" }}>
+          {[
+            { label: "Total Deadlines", value: trackedDeadlines.length, icon: "📋", color: "#6366f1", bg: "#eef2ff" },
+            { label: "Upcoming", value: upcomingCount, icon: "⏳", color: "#3b82f6", bg: "#eff6ff" },
+            { label: "Urgent (≤7 days)", value: urgentCount, icon: "🔥", color: "#ef4444", bg: "#fef2f2" },
+            { label: "Schools Tracked", value: new Set(trackedDeadlines.map(d => d.collegeId)).size, icon: "🏫", color: "#10b981", bg: "#f0fdf4" },
+          ].map(stat => (
+            <div key={stat.label} style={{ background: "white", borderRadius: "1rem", padding: "1.25rem", boxShadow: "0 1px 4px rgba(0,0,0,0.06)", display: "flex", alignItems: "center", gap: "1rem" }}>
+              <div style={{ width: 48, height: 48, borderRadius: "0.875rem", background: stat.bg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1.5rem", flexShrink: 0 }}>
+                {stat.icon}
+              </div>
+              <div>
+                <div style={{ fontSize: "1.75rem", fontWeight: 800, color: stat.color, lineHeight: 1 }}>{stat.value}</div>
+                <div style={{ fontSize: "0.8rem", color: "#9ca3af", marginTop: "0.2rem", fontWeight: 500 }}>{stat.label}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 300px", gap: "1.5rem", alignItems: "start" }}>
+          {/* MAIN DEADLINES PANEL */}
+          <div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1rem", flexWrap: "wrap", gap: "0.75rem" }}>
+              <h2 style={{ fontSize: "1.4rem", fontWeight: 800, color: "#1e1b4b", margin: 0 }}>Your Deadlines</h2>
+              <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
+                {(["ALL", "EA", "ED", "ED2", "RD", "FAFSA"] as const).map(type => (
+                  <button
+                    key={type}
+                    onClick={() => setFilterType(type)}
+                    style={{ padding: "0.35rem 0.875rem", borderRadius: "2rem", border: "none", fontWeight: 600, fontSize: "0.8rem", cursor: "pointer", background: filterType === type ? (type === "ALL" ? "#1e1b4b" : deadlineTypeColor(type)) : "#e5e7eb", color: filterType === type ? "white" : "#6b7280", transition: "all 0.15s" }}
+                  >
+                    {type}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {displayedDeadlines.length === 0 ? (
+              <div style={{ background: "white", borderRadius: "1.25rem", padding: "3rem 2rem", textAlign: "center", boxShadow: "0 1px 4px rgba(0,0,0,0.06)" }}>
+                <div style={{ fontSize: "3rem", marginBottom: "1rem" }}>🎯</div>
+                <h3 style={{ color: "#1e1b4b", fontWeight: 700, marginBottom: "0.5rem" }}>No deadlines tracked yet</h3>
+                <p style={{ color: "#9ca3af", marginBottom: "1.5rem" }}>Add schools to start tracking your application deadlines.</p>
+                <button
+                  onClick={() => setShowAddSchools(true)}
+                  style={{ padding: "0.75rem 2rem", background: "linear-gradient(135deg, #6366f1, #8b5cf6)", color: "white", border: "none", borderRadius: "2rem", fontWeight: 700, cursor: "pointer", fontSize: "0.95rem" }}
+                >
+                  + Add Schools
                 </button>
               </div>
-            </form>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+                {displayedDeadlines.map((deadline, idx) => {
+                  const timeLeft = getTimeUntil(deadline.date);
+                  const color = urgencyColor(timeLeft.days, timeLeft.past);
+                  const typeColor = deadlineTypeColor(deadline.type);
+                  const isNext = idx === 0 && !timeLeft.past;
+                  return (
+                    <div
+                      key={`${deadline.collegeId}-${deadline.type}`}
+                      style={{ background: "white", borderRadius: "1rem", padding: "1.25rem 1.5rem", boxShadow: isNext ? `0 4px 20px ${color}30` : "0 1px 4px rgba(0,0,0,0.06)", border: `1.5px solid ${isNext ? color : "transparent"}`, transition: "all 0.15s", position: "relative", overflow: "hidden" }}
+                    >
+                      {isNext && (
+                        <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: `linear-gradient(90deg, ${color}, ${typeColor})` }} />
+                      )}
+                      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "1rem", flexWrap: "wrap" }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: "0.625rem", marginBottom: "0.4rem", flexWrap: "wrap" }}>
+                            <span
+                              style={{ background: typeColor, color: "white", padding: "0.2rem 0.6rem", borderRadius: "1rem", fontSize: "0.75rem", fontWeight: 700 }}
+                            >
+                              {deadline.type}
+                            </span>
+                            {isNext && <span style={{ background: "#fef2f2", color: "#ef4444", padding: "0.2rem 0.6rem", borderRadius: "1rem", fontSize: "0.72rem", fontWeight: 700 }}>NEXT UP</span>}
+                            {!timeLeft.past && timeLeft.days <= 7 && !isNext && <span style={{ background: "#fff7ed", color: "#f97316", padding: "0.2rem 0.6rem", borderRadius: "1rem", fontSize: "0.72rem", fontWeight: 700 }}>URGENT</span>}
+                          </div>
+                          <h3 style={{ fontWeight: 700, color: "#1e1b4b", margin: "0 0 0.25rem", fontSize: "1.05rem", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                            {deadline.collegeName}
+                          </h3>
+                          <div style={{ color: "#9ca3af", fontSize: "0.875rem" }}>
+                            📅 Due: <strong style={{ color: "#374151" }}>{new Date(deadline.date + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}</strong>
+                          </div>
+                        </div>
+                        <div style={{ textAlign: "right", flexShrink: 0 }}>
+                          {timeLeft.past ? (
+                            <div style={{ color: "#9ca3af", fontWeight: 600, fontSize: "0.9rem" }}>Passed</div>
+                          ) : (
+                            <div>
+                              <div style={{ color, fontWeight: 800, fontSize: "1.1rem", lineHeight: 1 }}>
+                                {timeLeft.days}d {timeLeft.hours}h {timeLeft.minutes}m
+                              </div>
+                              <div style={{ color: "#9ca3af", fontSize: "0.78rem", marginTop: "0.2rem" }}>{timeLeft.seconds}s remaining</div>
+                            </div>
+                          )}
+                          <button
+                            onClick={() => handleRemoveDeadline(deadline.collegeId, deadline.type)}
+                            style={{ marginTop: "0.5rem", background: "none", border: "none", color: "#d1d5db", cursor: "pointer", fontSize: "0.8rem", padding: "0.2rem 0.4rem", borderRadius: "0.375rem" }}
+                            onMouseEnter={e => (e.currentTarget.style.color = "#ef4444")}
+                            onMouseLeave={e => (e.currentTarget.style.color = "#d1d5db")}
+                          >
+                            ✕ Remove
+                          </button>
+                        </div>
+                      </div>
+                      {!timeLeft.past && (
+                        <div style={{ marginTop: "0.875rem" }}>
+                          <div style={{ height: 4, background: "#f3f4f6", borderRadius: "2px", overflow: "hidden" }}>
+                            <div style={{ height: "100%", background: `linear-gradient(90deg, ${color}80, ${color})`, borderRadius: "2px", width: `${Math.max(2, Math.min(100, 100 - (timeLeft.days / 365) * 100))}%`, transition: "width 1s" }} />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            <div style={{ marginTop: "1.25rem", textAlign: "center" }}>
+              <button
+                onClick={() => setShowAddSchools(true)}
+                style={{ padding: "0.75rem 2rem", background: "white", border: "1.5px dashed #c7d2fe", borderRadius: "2rem", color: "#6366f1", fontWeight: 700, cursor: "pointer", fontSize: "0.95rem" }}
+                onMouseEnter={e => (e.currentTarget.style.background = "#eef2ff")}
+                onMouseLeave={e => (e.currentTarget.style.background = "white")}
+              >
+                + Add More Schools
+              </button>
+            </div>
+          </div>
+
+          {/* SIDEBAR */}
+          <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+            {/* REMINDER PREFS */}
+            <div style={{ background: "white", borderRadius: "1.25rem", padding: "1.25rem", boxShadow: "0 1px 4px rgba(0,0,0,0.06)" }}>
+              <h3 style={{ fontWeight: 700, color: "#1e1b4b", margin: "0 0 1rem", fontSize: "1rem" }}>⏰ Reminder Settings</h3>
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", marginBottom: "1rem" }}>
+                {REMINDER_OPTIONS.map(opt => (
+                  <label
+                    key={opt.value}
+                    onClick={() => setReminderPrefs(p => ({
+                      ...p,
+                      days: p.days.includes(opt.value) ? p.days.filter(d => d !== opt.value) : [...p.days, opt.value]
+                    }))}
+                    style={{ display: "flex", alignItems: "center", gap: "0.625rem", cursor: "pointer", padding: "0.5rem 0.75rem", borderRadius: "0.625rem", background: reminderPrefs.days.includes(opt.value) ? "#eef2ff" : "#f9fafb", transition: "all 0.15s" }}
+                  >
+                    <div style={{ width: 16, height: 16, borderRadius: 4, border: `2px solid ${reminderPrefs.days.includes(opt.value) ? "#6366f1" : "#d1d5db"}`, background: reminderPrefs.days.includes(opt.value) ? "#6366f1" : "white", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                      {reminderPrefs.days.includes(opt.value) && <span style={{ color: "white", fontSize: "0.6rem" }}>✓</span>}
+                    </div>
+                    <span style={{ fontSize: "0.85rem", fontWeight: 500, color: reminderPrefs.days.includes(opt.value) ? "#4f46e5" : "#6b7280" }}>{opt.label}</span>
+                  </label>
+                ))}
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", marginBottom: "1rem" }}>
+                <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.875rem", fontWeight: 500, color: "#374151", cursor: "pointer" }}
+                  onClick={() => setReminderPrefs(p => ({ ...p, email: !p.email }))}>
+                  <div style={{ width: 16, height: 16, borderRadius: 4, border: `2px solid ${reminderPrefs.email ? "#6366f1" : "#d1d5db"}`, background: reminderPrefs.email ? "#6366f1" : "white", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    {reminderPrefs.email && <span style={{ color: "white", fontSize: "0.6rem" }}>✓</span>}
+                  </div>
+                  📧 Email notifications
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.875rem", fontWeight: 500, color: "#374151", cursor: "pointer" }}
+                  onClick={() => setReminderPrefs(p => ({ ...p, sms: !p.sms }))}>
+                  <div style={{ width: 16, height: 16, borderRadius: 4, border: `2px solid ${reminderPrefs.sms ? "#6366f1" : "#d1d5db"}`, background: reminderPrefs.sms ? "#6366f1" : "white", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    {reminderPrefs.sms && <span style={{ color: "white", fontSize: "0.6rem" }}>✓</span>}
+                  </div>
+                  💬 SMS notifications
+                </label>
+              </div>
+              <button
+                onClick={handleSaveReminders}
+                style={{ width: "100%", padding: "0.65rem", background: "linear-gradient(135deg, #6366f1, #8b5cf6)", color: "white", border: "none", borderRadius: "0.75rem", fontWeight: 600, cursor: "pointer", fontSize: "0.875rem" }}
+              >
+                Save Preferences
+              </button>
+            </div>
+
+            {/* LEGEND */}
+            <div style={{ background: "white", borderRadius: "1.25rem", padding: "1.25rem", boxShadow: "0 1px 4px rgba(0,0,0,0.06)" }}>
+              <h3 style={{ fontWeight: 700, color: "#1e1b4b", margin: "0 0 0.875rem", fontSize: "1rem" }}>📖 Deadline Types</h3>
+              {(["EA", "ED", "ED2", "RD", "FAFSA"] as DeadlineType[]).map(type => (
+                <div key={type} style={{ display: "flex", alignItems: "flex-start", gap: "0.625rem", marginBottom: "0.75rem" }}>
+                  <span style={{ background: deadlineTypeColor(type), color: "white", padding: "0.1rem 0.5rem", borderRadius: "0.75rem", fontSize: "0.72rem", fontWeight: 700, flexShrink: 0, marginTop: "0.1rem" }}>{type}</span>
+                  <span style={{ fontSize: "0.8rem", color: "#6b7280", lineHeight: 1.4 }}>
+                    {type === "EA" && "Early Action – non-binding early decision"}
+                    {type === "ED" && "Early Decision – binding commitment"}
+                    {type === "ED2" && "Early Decision II – second round binding"}
+                    {type === "RD" && "Regular Decision – standard deadline"}
+                    {type === "FAFSA" && "Financial aid application deadline"}
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            {/* COUNTDOWN URGENCY LEGEND */}
+            <div style={{ background: "white", borderRadius: "1.25rem", padding: "1.25rem", boxShadow: "0 1px 4px rgba(0,0,0,0.06)" }}>
+              <h3 style={{ fontWeight: 700, color: "#1e1b4b", margin: "0 0 0.875rem", fontSize: "1rem" }}>🎨 Urgency Colors</h3>
+              {[
+                { label: "≤ 1 day", color: "#ef4444" },
+                { label: "2–7 days", color: "#f97316" },
+                { label: "8–14 days", color: "#eab308" },
+                { label: "15–30 days", color: "#3b82f6" },
+                { label: "30+ days", color: "#10b981" },
+              ].map(item => (
+                <div key={item.label} style={{ display: "flex", alignItems: "center", gap: "0.625rem", marginBottom: "0.5rem" }}>
+                  <div style={{ width: 12, height: 12, borderRadius: "50%", background: item.color, flexShrink: 0 }} />
+                  <span style={{ fontSize: "0.8rem", color: "#6b7280" }}>{item.label}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ADD SCHOOLS MODAL */}
+      {showAddSchools && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem" }}>
+          <div style={{ background: "white", borderRadius: "1.5rem", width: "100%", maxWidth: 700, maxHeight: "85vh", display: "flex", flexDirection: "column", boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
+            <div style={{ padding: "1.5rem 1.5rem 1rem", borderBottom: "1px solid #f3f4f6" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <h3 style={{ fontWeight: 800, color: "#1e1b4b", margin: 0, fontSize: "1.25rem" }}>Add More Schools</h3>
+                <button onClick={() => { setShowAddSchools(false); setSelectedSchools([]); setSelectedDeadlineTypes({}); }} style={{ background: "none", border: "none", fontSize: "1.25rem", cursor: "pointer", color: "#9ca3af" }}>✕</button>
+              </div>
+              <div style={{ position: "relative", marginTop: "1rem" }}>
+                <span style={{ position: "absolute", left: "1rem", top: "50%", transform: "translateY(-50%)" }}>🔍</span>
+                <input
+                  type="text"
+                  value={addSearchQuery}
+                  onChange={e => setAddSearchQuery(e.target.value)}
+                  placeholder="Search colleges..."
+                  style={{ width: "100%", padding: "0.75rem 1rem 0.75rem 2.5rem", border: "1.5px solid #e5e7eb", borderRadius: "0.75rem", fontSize: "0.95rem", outline: "none", boxSizing: "border-box" }}
+                />
+              </div>
+            </div>
+            <div style={{ flex: 1, overflowY: "auto", padding: "1rem 1.5rem" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.625rem" }}>
+                {filteredAddColleges.map(college => {
+                  const isSelected = selectedSchools.includes(college.id);
+                  const isAlreadyTracked = trackedDeadlines.some(d => d.collegeId === college.id);
+                  const selectedTypes = selectedDeadlineTypes[college.id] || [];
+                  const availableTypes = (["EA", "ED", "ED2", "RD", "FAFSA"] as DeadlineType[]).filter(t => college.deadlines[t]);
+                  return (
+                    <div
+                      key={college.id}
+                      style={{ background: isAlreadyTracked && !isSelected ? "#f9fafb" : "white", borderRadius: "0.875rem", border: `1.5px solid ${isSelected ? "#6366f1" : "#e5e7eb"}`, padding: "0.875rem 1rem" }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+                        <div
+                          onClick={() => !isAlreadyTracked && handleSchoolToggle(college.id)}
+                          style={{ width: 20, height: 20, borderRadius: 5, border: `2px solid ${isSelected ? "#6366f1" : isAlreadyTracked ? "#e5e7eb" : "#d1d5db"}`, background: isSelected ? "#6366f1" : "white", display: "flex", alignItems: "center", justifyContent: "center", cursor: isAlreadyTracked ? "default" : "pointer", flexShrink: 0 }}
+                        >
+                          {isSelected && <span style={{ color: "white", fontSize: "0.7rem" }}>✓</span>}
+                        </div>
+                        <div style={{ flex: 1, cursor: isAlreadyTracked ? "default" : "pointer" }} onClick={() => !isAlreadyTracked && handleSchoolToggle(college.id)}>
+                          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                            <span style={{ fontWeight: 700, color: isAlreadyTracked ? "#9ca3af" : "#1e1b4b", fontSize: "0.95rem" }}>{college.name}</span>
+                            <span style={{ color: "#9ca3af", fontSize: "0.8rem" }}>{college.location}</span>
+                            {isAlreadyTracked && <span style={{ background: "#f0fdf4", color: "#15803d", padding: "0.1rem 0.4rem", borderRadius: "0.5rem", fontSize: "0.72rem", fontWeight: 600 }}>Already tracking</span>}
+                          </div>
+                        </div>
+                      </div>
+                      {isSelected && (
+                        <div style={{ marginTop: "0.625rem", marginLeft: "2rem", display: "flex", flexWrap: "wrap", gap: "0.4rem" }}>
+                          {availableTypes.map(type => (
+                            <button
+                              key={type}
+                              onClick={() => toggleDeadlineType(college.id, type)}
+                              style={{ padding: "0.25rem 0.625rem", borderRadius: "1.5rem", border: `1.5px solid ${selectedTypes.includes(type) ? deadlineTypeColor(type) : "#e5e7eb"}`, background: selectedTypes.includes(type) ? deadlineTypeColor(type) : "white", color: selectedTypes.includes(type) ? "white" : "#6b7280", fontSize: "0.75rem", fontWeight: 600, cursor: "pointer" }}
+                            >
+                              {type} · {college.deadlines[type]}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+            <div style={{ padding: "1rem 1.5rem", borderTop: "1px solid #f3f4f6", display: "flex", justifyContent: "flex-end", gap: "0.75rem" }}>
+              <button
+                onClick={() => { setShowAddSchools(false); setSelectedSchools([]); setSelectedDeadlineTypes({}); }}
+                style={{ padding: "0.7rem 1.5rem", background: "white", border: "1.5px solid #e5e7eb", borderRadius: "2rem", color: "#374151", fontWeight: 600, cursor: "pointer" }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleAddSchoolsToDashboard}
+                disabled={selectedSchools.length === 0}
+                style={{ padding: "0.7rem 1.75rem", background: selectedSchools.length === 0 ? "#e5e7eb" : "linear-gradient(135deg, #6366f1, #8b5cf6)", color: selectedSchools.length === 0 ? "#9ca3af" : "white", border: "none", borderRadius: "2rem", fontWeight: 700, cursor: selectedSchools.length === 0 ? "not-allowed" : "pointer", fontSize: "0.9rem" }}
+              >
+                Add {selectedSchools.length > 0 ? `${selectedSchools.length} School${selectedSchools.length !== 1 ? "s" : ""}` : "Schools"} →
+              </button>
+            </div>
           </div>
         </div>
       )}
+
+      {/* invisible tick dependency to force re-render */}
+      <span style={{ display: "none" }}>{tick}</span>
     </div>
   );
 }
-
-const labelStyle: React.CSSProperties = {
-  display: "block", fontSize: 13, fontWeight: 600, color: "#374151", marginBottom: 6,
-};
-
-const inputStyle: React.CSSProperties = {
-  width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #d1d5db",
-  fontSize: 14, color: "#1e293b", outline: "none", boxSizing: "border-box",
-  background: "white",
-};
-
-const btnPrimary: React.CSSProperties = {
-  padding: "10px 20px", borderRadius: 8, border: "none",
-  background: "linear-gradient(135deg, #667eea, #764ba2)", color: "white",
-  fontWeight: 600, fontSize: 14, cursor: "pointer",
-};
-
-const btnSecondary: React.CSSProperties = {
-  padding: "8px 16px", borderRadius: 8, border: "1px solid #e2e8f0",
-  background: "white", color: "#475569", fontWeight: 500, fontSize: 13, cursor: "pointer",
-};
