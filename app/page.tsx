@@ -1,507 +1,138 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-
-interface Deadline {
-  type: "ED" | "EA" | "RD" | "FA";
-  label: string;
-  date: string; // YYYY-MM-DD
-}
+import { useEffect, useState, useCallback } from "react";
 
 interface College {
   id: string;
   name: string;
   location: string;
-  deadlines: Deadline[];
+  type: string;
+  ea?: string;
+  ed?: string;
+  ed2?: string;
+  rd: string;
+  scholarship?: string;
 }
 
-interface MySchool {
+interface Deadline {
   collegeId: string;
-  addedAt: string;
-}
-
-interface ReminderSub {
-  email: string;
-  phone?: string;
-  collegeId: string;
-  deadlineType: string;
-  deadlineDate: string;
-}
-
-interface UpcomingDeadline {
-  college: College;
-  deadline: Deadline;
+  collegeName: string;
+  type: string;
+  date: string;
   daysUntil: number;
 }
 
+interface UserSchool {
+  id: number;
+  college_id: string;
+  college_name: string;
+  deadline_type: string;
+  deadline_date: string;
+  email_reminder: boolean;
+  sms_reminder: boolean;
+  phone_number: string;
+  reminder_email: string;
+}
+
+interface ReminderSettings {
+  email: string;
+  phone: string;
+  emailReminders: boolean;
+  smsReminders: boolean;
+}
+
 const COLLEGES: College[] = [
-  { id: "mit", name: "MIT", location: "Cambridge, MA", deadlines: [
-    { type: "EA", label: "Early Action", date: "2024-11-01" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-01" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-02-01" },
-  ]},
-  { id: "harvard", name: "Harvard University", location: "Cambridge, MA", deadlines: [
-    { type: "EA", label: "Restrictive Early Action", date: "2024-11-01" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-01" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-02-01" },
-  ]},
-  { id: "stanford", name: "Stanford University", location: "Stanford, CA", deadlines: [
-    { type: "EA", label: "Restrictive Early Action", date: "2024-11-01" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-02" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-02-15" },
-  ]},
-  { id: "yale", name: "Yale University", location: "New Haven, CT", deadlines: [
-    { type: "EA", label: "Single-Choice Early Action", date: "2024-11-01" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-02" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-03-01" },
-  ]},
-  { id: "princeton", name: "Princeton University", location: "Princeton, NJ", deadlines: [
-    { type: "EA", label: "Single-Choice Early Action", date: "2024-11-01" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-01" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-02-01" },
-  ]},
-  { id: "columbia", name: "Columbia University", location: "New York, NY", deadlines: [
-    { type: "ED", label: "Early Decision I", date: "2024-11-01" },
-    { type: "ED", label: "Early Decision II", date: "2025-01-01" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-01" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-03-01" },
-  ]},
-  { id: "upenn", name: "University of Pennsylvania", location: "Philadelphia, PA", deadlines: [
-    { type: "ED", label: "Early Decision I", date: "2024-11-01" },
-    { type: "ED", label: "Early Decision II", date: "2025-01-01" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-05" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-02-15" },
-  ]},
-  { id: "brown", name: "Brown University", location: "Providence, RI", deadlines: [
-    { type: "ED", label: "Early Decision I", date: "2024-11-01" },
-    { type: "ED", label: "Early Decision II", date: "2025-01-01" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-05" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-03-01" },
-  ]},
-  { id: "dartmouth", name: "Dartmouth College", location: "Hanover, NH", deadlines: [
-    { type: "ED", label: "Early Decision I", date: "2024-11-01" },
-    { type: "ED", label: "Early Decision II", date: "2025-01-01" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-02" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-02-01" },
-  ]},
-  { id: "cornell", name: "Cornell University", location: "Ithaca, NY", deadlines: [
-    { type: "ED", label: "Early Decision I", date: "2024-11-01" },
-    { type: "ED", label: "Early Decision II", date: "2025-01-01" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-02" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-02-15" },
-  ]},
-  { id: "duke", name: "Duke University", location: "Durham, NC", deadlines: [
-    { type: "ED", label: "Early Decision I", date: "2024-11-01" },
-    { type: "ED", label: "Early Decision II", date: "2025-01-02" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-02" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-03-01" },
-  ]},
-  { id: "vanderbilt", name: "Vanderbilt University", location: "Nashville, TN", deadlines: [
-    { type: "ED", label: "Early Decision I", date: "2024-11-01" },
-    { type: "ED", label: "Early Decision II", date: "2025-01-01" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-01" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-02-15" },
-  ]},
-  { id: "northwestern", name: "Northwestern University", location: "Evanston, IL", deadlines: [
-    { type: "ED", label: "Early Decision I", date: "2024-11-01" },
-    { type: "ED", label: "Early Decision II", date: "2025-01-01" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-03" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-02-15" },
-  ]},
-  { id: "uchicago", name: "University of Chicago", location: "Chicago, IL", deadlines: [
-    { type: "ED", label: "Early Decision I", date: "2024-11-01" },
-    { type: "ED", label: "Early Decision II", date: "2025-01-02" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-02" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-02-15" },
-  ]},
-  { id: "jhu", name: "Johns Hopkins University", location: "Baltimore, MD", deadlines: [
-    { type: "ED", label: "Early Decision I", date: "2024-11-01" },
-    { type: "ED", label: "Early Decision II", date: "2025-01-02" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-02" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-03-01" },
-  ]},
-  { id: "rice", name: "Rice University", location: "Houston, TX", deadlines: [
-    { type: "ED", label: "Early Decision I", date: "2024-11-01" },
-    { type: "ED", label: "Early Decision II", date: "2025-01-01" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-01" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-03-01" },
-  ]},
-  { id: "notre-dame", name: "University of Notre Dame", location: "Notre Dame, IN", deadlines: [
-    { type: "EA", label: "Restrictive Early Action", date: "2024-11-01" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-01" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-02-15" },
-  ]},
-  { id: "georgetown", name: "Georgetown University", location: "Washington, DC", deadlines: [
-    { type: "EA", label: "Early Action", date: "2024-11-01" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-10" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-02-01" },
-  ]},
-  { id: "emory", name: "Emory University", location: "Atlanta, GA", deadlines: [
-    { type: "ED", label: "Early Decision I", date: "2024-11-01" },
-    { type: "ED", label: "Early Decision II", date: "2025-01-01" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-15" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-03-01" },
-  ]},
-  { id: "washu", name: "Washington University in St. Louis", location: "St. Louis, MO", deadlines: [
-    { type: "ED", label: "Early Decision I", date: "2024-11-01" },
-    { type: "ED", label: "Early Decision II", date: "2025-01-02" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-02" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-02-01" },
-  ]},
-  { id: "tufts", name: "Tufts University", location: "Medford, MA", deadlines: [
-    { type: "ED", label: "Early Decision I", date: "2024-11-01" },
-    { type: "ED", label: "Early Decision II", date: "2025-01-01" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-01" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-02-15" },
-  ]},
-  { id: "usc", name: "University of Southern California", location: "Los Angeles, CA", deadlines: [
-    { type: "ED", label: "Early Decision", date: "2024-11-01" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-15" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-02-01" },
-  ]},
-  { id: "nyu", name: "New York University", location: "New York, NY", deadlines: [
-    { type: "ED", label: "Early Decision I", date: "2024-11-01" },
-    { type: "ED", label: "Early Decision II", date: "2025-01-01" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-05" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-02-15" },
-  ]},
-  { id: "boston-college", name: "Boston College", location: "Chestnut Hill, MA", deadlines: [
-    { type: "EA", label: "Early Action", date: "2024-11-01" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-01" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-02-01" },
-  ]},
-  { id: "bu", name: "Boston University", location: "Boston, MA", deadlines: [
-    { type: "ED", label: "Early Decision I", date: "2024-11-01" },
-    { type: "ED", label: "Early Decision II", date: "2025-01-03" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-03" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-02-15" },
-  ]},
-  { id: "tulane", name: "Tulane University", location: "New Orleans, LA", deadlines: [
-    { type: "ED", label: "Early Decision I", date: "2024-11-01" },
-    { type: "ED", label: "Early Decision II", date: "2025-01-08" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-15" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-02-15" },
-  ]},
-  { id: "lehigh", name: "Lehigh University", location: "Bethlehem, PA", deadlines: [
-    { type: "ED", label: "Early Decision I", date: "2024-11-01" },
-    { type: "ED", label: "Early Decision II", date: "2025-01-01" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-15" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-02-15" },
-  ]},
-  { id: "wake-forest", name: "Wake Forest University", location: "Winston-Salem, NC", deadlines: [
-    { type: "ED", label: "Early Decision I", date: "2024-11-15" },
-    { type: "ED", label: "Early Decision II", date: "2025-01-01" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-01" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-03-01" },
-  ]},
-  { id: "case-western", name: "Case Western Reserve University", location: "Cleveland, OH", deadlines: [
-    { type: "ED", label: "Early Decision I", date: "2024-11-01" },
-    { type: "ED", label: "Early Decision II", date: "2025-01-15" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-15" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-02-15" },
-  ]},
-  { id: "rpi", name: "Rensselaer Polytechnic Institute", location: "Troy, NY", deadlines: [
-    { type: "ED", label: "Early Decision", date: "2024-11-01" },
-    { type: "EA", label: "Early Action", date: "2024-11-15" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-15" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-02-01" },
-  ]},
-  { id: "rochester", name: "University of Rochester", location: "Rochester, NY", deadlines: [
-    { type: "ED", label: "Early Decision I", date: "2024-11-01" },
-    { type: "ED", label: "Early Decision II", date: "2025-01-05" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-05" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-02-15" },
-  ]},
-  { id: "northeastern", name: "Northeastern University", location: "Boston, MA", deadlines: [
-    { type: "ED", label: "Early Decision I", date: "2024-11-01" },
-    { type: "ED", label: "Early Decision II", date: "2025-01-01" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-01" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-02-15" },
-  ]},
-  { id: "villanova", name: "Villanova University", location: "Villanova, PA", deadlines: [
-    { type: "EA", label: "Early Action", date: "2024-11-01" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-15" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-02-07" },
-  ]},
-  { id: "fordham", name: "Fordham University", location: "New York, NY", deadlines: [
-    { type: "ED", label: "Early Decision I", date: "2024-11-01" },
-    { type: "ED", label: "Early Decision II", date: "2025-01-01" },
-    { type: "EA", label: "Early Action", date: "2024-11-01" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-15" },
-    { type: "FA", label: "Financial Aid", date: "2025-02-01" },
-  ]},
-  { id: "american", name: "American University", location: "Washington, DC", deadlines: [
-    { type: "ED", label: "Early Decision I", date: "2024-11-15" },
-    { type: "ED", label: "Early Decision II", date: "2025-01-15" },
-    { type: "EA", label: "Early Action", date: "2024-11-15" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-15" },
-    { type: "FA", label: "Financial Aid", date: "2025-02-15" },
-  ]},
-  { id: "ucb", name: "UC Berkeley", location: "Berkeley, CA", deadlines: [
-    { type: "RD", label: "Regular Decision", date: "2024-11-30" },
-    { type: "FA", label: "Financial Aid (FAFSA)", date: "2025-03-02" },
-  ]},
-  { id: "ucla", name: "UCLA", location: "Los Angeles, CA", deadlines: [
-    { type: "RD", label: "Regular Decision", date: "2024-11-30" },
-    { type: "FA", label: "Financial Aid (FAFSA)", date: "2025-03-02" },
-  ]},
-  { id: "ucsd", name: "UC San Diego", location: "La Jolla, CA", deadlines: [
-    { type: "RD", label: "Regular Decision", date: "2024-11-30" },
-    { type: "FA", label: "Financial Aid (FAFSA)", date: "2025-03-02" },
-  ]},
-  { id: "uc-davis", name: "UC Davis", location: "Davis, CA", deadlines: [
-    { type: "RD", label: "Regular Decision", date: "2024-11-30" },
-    { type: "FA", label: "Financial Aid (FAFSA)", date: "2025-03-02" },
-  ]},
-  { id: "uc-irvine", name: "UC Irvine", location: "Irvine, CA", deadlines: [
-    { type: "RD", label: "Regular Decision", date: "2024-11-30" },
-    { type: "FA", label: "Financial Aid (FAFSA)", date: "2025-03-02" },
-  ]},
-  { id: "michigan", name: "University of Michigan", location: "Ann Arbor, MI", deadlines: [
-    { type: "EA", label: "Early Action", date: "2024-11-01" },
-    { type: "RD", label: "Regular Decision", date: "2025-02-01" },
-    { type: "FA", label: "Financial Aid", date: "2025-04-30" },
-  ]},
-  { id: "virginia", name: "University of Virginia", location: "Charlottesville, VA", deadlines: [
-    { type: "EA", label: "Early Action", date: "2024-11-01" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-01" },
-    { type: "FA", label: "Financial Aid", date: "2025-03-01" },
-  ]},
-  { id: "unc", name: "UNC Chapel Hill", location: "Chapel Hill, NC", deadlines: [
-    { type: "EA", label: "Early Action", date: "2024-10-15" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-15" },
-    { type: "FA", label: "Financial Aid", date: "2025-03-01" },
-  ]},
-  { id: "georgia-tech", name: "Georgia Tech", location: "Atlanta, GA", deadlines: [
-    { type: "EA", label: "Early Action", date: "2024-10-15" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-07" },
-    { type: "FA", label: "Financial Aid", date: "2025-02-15" },
-  ]},
-  { id: "william-mary", name: "College of William & Mary", location: "Williamsburg, VA", deadlines: [
-    { type: "ED", label: "Early Decision I", date: "2024-11-01" },
-    { type: "ED", label: "Early Decision II", date: "2025-01-01" },
-    { type: "EA", label: "Early Action", date: "2024-11-01" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-08" },
-    { type: "FA", label: "Financial Aid", date: "2025-03-01" },
-  ]},
-  { id: "uw-madison", name: "University of Wisconsin-Madison", location: "Madison, WI", deadlines: [
-    { type: "EA", label: "Early Action", date: "2024-11-01" },
-    { type: "RD", label: "Regular Decision", date: "2025-02-01" },
-    { type: "FA", label: "Financial Aid", date: "2025-03-01" },
-  ]},
-  { id: "ohio-state", name: "Ohio State University", location: "Columbus, OH", deadlines: [
-    { type: "EA", label: "Early Action", date: "2024-11-01" },
-    { type: "RD", label: "Regular Decision", date: "2025-02-01" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-02-15" },
-  ]},
-  { id: "penn-state", name: "Penn State University Park", location: "University Park, PA", deadlines: [
-    { type: "EA", label: "Early Action", date: "2024-11-01" },
-    { type: "RD", label: "Regular Decision", date: "2025-02-15" },
-    { type: "FA", label: "Financial Aid", date: "2025-02-15" },
-  ]},
-  { id: "purdue", name: "Purdue University", location: "West Lafayette, IN", deadlines: [
-    { type: "EA", label: "Early Action", date: "2024-11-01" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-15" },
-    { type: "FA", label: "Financial Aid", date: "2025-03-01" },
-  ]},
-  { id: "ut-austin", name: "UT Austin", location: "Austin, TX", deadlines: [
-    { type: "EA", label: "Early Action", date: "2024-11-01" },
-    { type: "RD", label: "Regular Decision", date: "2025-12-01" },
-    { type: "FA", label: "Financial Aid", date: "2025-03-15" },
-  ]},
-  { id: "uf", name: "University of Florida", location: "Gainesville, FL", deadlines: [
-    { type: "EA", label: "Early Action", date: "2024-11-01" },
-    { type: "RD", label: "Regular Decision", date: "2025-03-01" },
-    { type: "FA", label: "Financial Aid", date: "2025-01-15" },
-  ]},
-  { id: "umd", name: "University of Maryland", location: "College Park, MD", deadlines: [
-    { type: "EA", label: "Early Action", date: "2024-11-01" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-20" },
-    { type: "FA", label: "Financial Aid", date: "2025-02-15" },
-  ]},
-  { id: "illinois", name: "University of Illinois Urbana-Champaign", location: "Champaign, IL", deadlines: [
-    { type: "EA", label: "Early Action", date: "2024-11-01" },
-    { type: "RD", label: "Regular Decision", date: "2025-03-15" },
-    { type: "FA", label: "Financial Aid", date: "2025-03-15" },
-  ]},
-  { id: "indiana", name: "Indiana University Bloomington", location: "Bloomington, IN", deadlines: [
-    { type: "EA", label: "Early Action I", date: "2024-11-01" },
-    { type: "EA", label: "Early Action II", date: "2024-12-01" },
-    { type: "RD", label: "Regular Decision", date: "2025-02-01" },
-    { type: "FA", label: "Financial Aid", date: "2025-03-01" },
-  ]},
-  { id: "minnesota", name: "University of Minnesota Twin Cities", location: "Minneapolis, MN", deadlines: [
-    { type: "EA", label: "Early Action", date: "2024-11-01" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-15" },
-    { type: "FA", label: "Financial Aid", date: "2025-02-01" },
-  ]},
-  { id: "carnegie-mellon", name: "Carnegie Mellon University", location: "Pittsburgh, PA", deadlines: [
-    { type: "ED", label: "Early Decision", date: "2024-11-01" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-03" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-02-15" },
-  ]},
-  { id: "caltech", name: "California Institute of Technology", location: "Pasadena, CA", deadlines: [
-    { type: "EA", label: "Early Action", date: "2024-11-01" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-03" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-01-03" },
-  ]},
-  { id: "harvey-mudd", name: "Harvey Mudd College", location: "Claremont, CA", deadlines: [
-    { type: "ED", label: "Early Decision I", date: "2024-11-01" },
-    { type: "ED", label: "Early Decision II", date: "2025-01-05" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-05" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-02-01" },
-  ]},
-  { id: "pomona", name: "Pomona College", location: "Claremont, CA", deadlines: [
-    { type: "ED", label: "Early Decision I", date: "2024-11-01" },
-    { type: "ED", label: "Early Decision II", date: "2025-01-08" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-08" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-02-15" },
-  ]},
-  { id: "swarthmore", name: "Swarthmore College", location: "Swarthmore, PA", deadlines: [
-    { type: "ED", label: "Early Decision I", date: "2024-11-15" },
-    { type: "ED", label: "Early Decision II", date: "2025-01-02" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-02" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-02-15" },
-  ]},
-  { id: "amherst", name: "Amherst College", location: "Amherst, MA", deadlines: [
-    { type: "ED", label: "Early Decision I", date: "2024-11-01" },
-    { type: "ED", label: "Early Decision II", date: "2025-01-03" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-03" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-02-15" },
-  ]},
-  { id: "williams", name: "Williams College", location: "Williamstown, MA", deadlines: [
-    { type: "ED", label: "Early Decision I", date: "2024-11-15" },
-    { type: "ED", label: "Early Decision II", date: "2025-01-01" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-01" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-02-01" },
-  ]},
-  { id: "wellesley", name: "Wellesley College", location: "Wellesley, MA", deadlines: [
-    { type: "ED", label: "Early Decision I", date: "2024-11-01" },
-    { type: "ED", label: "Early Decision II", date: "2025-01-15" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-15" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-02-01" },
-  ]},
-  { id: "colgate", name: "Colgate University", location: "Hamilton, NY", deadlines: [
-    { type: "ED", label: "Early Decision I", date: "2024-11-15" },
-    { type: "ED", label: "Early Decision II", date: "2025-01-15" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-15" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-02-01" },
-  ]},
-  { id: "colby", name: "Colby College", location: "Waterville, ME", deadlines: [
-    { type: "ED", label: "Early Decision I", date: "2024-11-01" },
-    { type: "ED", label: "Early Decision II", date: "2025-01-01" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-01" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-02-01" },
-  ]},
-  { id: "bates", name: "Bates College", location: "Lewiston, ME", deadlines: [
-    { type: "ED", label: "Early Decision I", date: "2024-11-15" },
-    { type: "ED", label: "Early Decision II", date: "2025-01-01" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-15" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-02-15" },
-  ]},
-  { id: "bowdoin", name: "Bowdoin College", location: "Brunswick, ME", deadlines: [
-    { type: "ED", label: "Early Decision I", date: "2024-11-15" },
-    { type: "ED", label: "Early Decision II", date: "2025-01-05" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-05" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-02-15" },
-  ]},
-  { id: "middlebury", name: "Middlebury College", location: "Middlebury, VT", deadlines: [
-    { type: "ED", label: "Early Decision I", date: "2024-11-01" },
-    { type: "ED", label: "Early Decision II", date: "2025-01-03" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-03" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-02-01" },
-  ]},
-  { id: "hamilton", name: "Hamilton College", location: "Clinton, NY", deadlines: [
-    { type: "ED", label: "Early Decision I", date: "2024-11-01" },
-    { type: "ED", label: "Early Decision II", date: "2025-01-01" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-01" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-02-01" },
-  ]},
-  { id: "vassar", name: "Vassar College", location: "Poughkeepsie, NY", deadlines: [
-    { type: "ED", label: "Early Decision I", date: "2024-11-15" },
-    { type: "ED", label: "Early Decision II", date: "2025-01-01" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-01" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-02-01" },
-  ]},
-  { id: "smith", name: "Smith College", location: "Northampton, MA", deadlines: [
-    { type: "ED", label: "Early Decision I", date: "2024-11-15" },
-    { type: "ED", label: "Early Decision II", date: "2025-01-01" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-15" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-02-15" },
-  ]},
-  { id: "mount-holyoke", name: "Mount Holyoke College", location: "South Hadley, MA", deadlines: [
-    { type: "ED", label: "Early Decision I", date: "2024-11-15" },
-    { type: "ED", label: "Early Decision II", date: "2025-01-15" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-15" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-02-15" },
-  ]},
-  { id: "macalester", name: "Macalester College", location: "St. Paul, MN", deadlines: [
-    { type: "ED", label: "Early Decision I", date: "2024-11-01" },
-    { type: "ED", label: "Early Decision II", date: "2025-01-01" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-15" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-02-08" },
-  ]},
-  { id: "oberlin", name: "Oberlin College", location: "Oberlin, OH", deadlines: [
-    { type: "ED", label: "Early Decision I", date: "2024-11-15" },
-    { type: "ED", label: "Early Decision II", date: "2025-01-02" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-15" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-02-15" },
-  ]},
-  { id: "grinnell", name: "Grinnell College", location: "Grinnell, IA", deadlines: [
-    { type: "ED", label: "Early Decision I", date: "2024-11-15" },
-    { type: "ED", label: "Early Decision II", date: "2025-01-02" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-15" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-02-01" },
-  ]},
-  { id: "carleton", name: "Carleton College", location: "Northfield, MN", deadlines: [
-    { type: "ED", label: "Early Decision I", date: "2024-11-15" },
-    { type: "ED", label: "Early Decision II", date: "2025-01-15" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-15" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-02-15" },
-  ]},
-  { id: "davidson", name: "Davidson College", location: "Davidson, NC", deadlines: [
-    { type: "ED", label: "Early Decision I", date: "2024-11-15" },
-    { type: "ED", label: "Early Decision II", date: "2025-01-15" },
-    { type: "RD", label: "Regular Decision", date: "2025-01-15" },
-    { type: "FA", label: "Financial Aid (CSS)", date: "2025-02-15" },
-  ]},
-  { id: "denison", name: "Denison University", location: "Granville, OH", deadlines: [
-    { type: "ED", label: "Early Decision I", date: "2024-11-01" },
-    { type: "ED", label: "Early Decision II", date: "2024-12-01" },
-    { type: "EA", label: "Early Action", date: "2024-12-01" },
-    { type: "RD", label: "Regular Decision", date: "2025-02-01" },
-    { type: "FA", label: "Financial Aid", date: "2025-03-01" },
-  ]},
-  { id: "uw", name: "University of Washington", location: "Seattle, WA", deadlines: [
-    { type: "RD", label: "Regular Decision", date: "2024-11-15" },
-    { type: "FA", label: "Financial Aid", date: "2025-01-15" },
-  ]},
-  { id: "rutgers", name: "Rutgers University-New Brunswick", location: "New Brunswick, NJ", deadlines: [
-    { type: "EA", label: "Early Action", date: "2024-11-01" },
-    { type: "RD", label: "Regular Decision", date: "2025-12-01" },
-    { type: "FA", label: "Financial Aid", date: "2025-03-01" },
-  ]},
-  { id: "pitt", name: "University of Pittsburgh", location: "Pittsburgh, PA", deadlines: [
-    { type: "EA", label: "Early Action", date: "2024-11-01" },
-    { type: "RD", label: "Regular Decision", date: "2025-03-01" },
-    { type: "FA", label: "Financial Aid", date: "2025-03-01" },
-  ]},
+  { id: "mit", name: "MIT", location: "Cambridge, MA", type: "Private", ea: "2024-11-01", rd: "2025-01-01", scholarship: "2025-02-15" },
+  { id: "harvard", name: "Harvard University", location: "Cambridge, MA", type: "Private", ed: "2024-11-01", rd: "2025-01-01" },
+  { id: "yale", name: "Yale University", location: "New Haven, CT", type: "Private", ed: "2024-11-01", rd: "2025-01-02" },
+  { id: "princeton", name: "Princeton University", location: "Princeton, NJ", type: "Private", ed: "2024-11-01", rd: "2025-01-01" },
+  { id: "columbia", name: "Columbia University", location: "New York, NY", type: "Private", ed: "2024-11-01", rd: "2025-01-01" },
+  { id: "upenn", name: "UPenn", location: "Philadelphia, PA", type: "Private", ed: "2024-11-01", rd: "2025-01-05" },
+  { id: "brown", name: "Brown University", location: "Providence, RI", type: "Private", ed: "2024-11-01", rd: "2025-01-05" },
+  { id: "dartmouth", name: "Dartmouth College", location: "Hanover, NH", type: "Private", ed: "2024-11-01", rd: "2025-01-03" },
+  { id: "cornell", name: "Cornell University", location: "Ithaca, NY", type: "Private", ed: "2024-11-01", rd: "2025-01-02" },
+  { id: "stanford", name: "Stanford University", location: "Stanford, CA", type: "Private", ea: "2024-11-01", rd: "2025-01-05" },
+  { id: "caltech", name: "Caltech", location: "Pasadena, CA", type: "Private", ea: "2024-11-01", rd: "2025-01-03", scholarship: "2025-01-03" },
+  { id: "duke", name: "Duke University", location: "Durham, NC", type: "Private", ed: "2024-11-01", ed2: "2025-01-03", rd: "2025-01-06" },
+  { id: "jhu", name: "Johns Hopkins", location: "Baltimore, MD", type: "Private", ed: "2024-11-01", ed2: "2025-01-02", rd: "2025-01-05" },
+  { id: "northwestern", name: "Northwestern University", location: "Evanston, IL", type: "Private", ed: "2024-11-01", ed2: "2025-01-01", rd: "2025-01-03" },
+  { id: "vanderbilt", name: "Vanderbilt University", location: "Nashville, TN", type: "Private", ed: "2024-11-01", ed2: "2025-01-01", rd: "2025-01-03" },
+  { id: "rice", name: "Rice University", location: "Houston, TX", type: "Private", ed: "2024-11-01", ed2: "2025-01-01", rd: "2025-01-06", scholarship: "2025-01-06" },
+  { id: "wustl", name: "WashU St. Louis", location: "St. Louis, MO", type: "Private", ed: "2024-11-01", ed2: "2025-01-01", rd: "2025-01-03", scholarship: "2025-01-15" },
+  { id: "notre-dame", name: "Notre Dame", location: "Notre Dame, IN", type: "Private", ea: "2024-11-01", rd: "2025-01-05" },
+  { id: "georgetown", name: "Georgetown University", location: "Washington, DC", type: "Private", ea: "2024-11-01", rd: "2025-01-10" },
+  { id: "emory", name: "Emory University", location: "Atlanta, GA", type: "Private", ed: "2024-11-01", ed2: "2025-01-01", rd: "2025-01-07", scholarship: "2025-02-01" },
+  { id: "tufts", name: "Tufts University", location: "Medford, MA", type: "Private", ed: "2024-11-01", ed2: "2025-01-01", rd: "2025-01-06" },
+  { id: "carnegie-mellon", name: "Carnegie Mellon", location: "Pittsburgh, PA", type: "Private", ed: "2024-11-01", rd: "2025-01-04" },
+  { id: "uchicago", name: "UChicago", location: "Chicago, IL", type: "Private", ea: "2024-11-01", ed: "2024-11-01", rd: "2025-01-06" },
+  { id: "usc", name: "USC", location: "Los Angeles, CA", type: "Private", ed: "2024-11-01", rd: "2025-01-15", scholarship: "2024-12-01" },
+  { id: "boston-college", name: "Boston College", location: "Chestnut Hill, MA", type: "Private", ea: "2024-11-01", ed: "2024-11-01", rd: "2025-01-03" },
+  { id: "bu", name: "Boston University", location: "Boston, MA", type: "Private", ea: "2024-11-01", ed: "2024-11-01", rd: "2025-01-05", scholarship: "2024-12-01" },
+  { id: "northeastern", name: "Northeastern University", location: "Boston, MA", type: "Private", ea: "2024-11-01", ed: "2024-11-01", rd: "2025-01-06" },
+  { id: "tulane", name: "Tulane University", location: "New Orleans, LA", type: "Private", ea: "2024-11-01", rd: "2025-01-15", scholarship: "2025-02-15" },
+  { id: "wake-forest", name: "Wake Forest", location: "Winston-Salem, NC", type: "Private", ed: "2024-11-01", ed2: "2025-01-01", rd: "2025-01-05" },
+  { id: "lehigh", name: "Lehigh University", location: "Bethlehem, PA", type: "Private", ed: "2024-11-01", ed2: "2025-01-01", rd: "2025-01-10" },
+  { id: "colgate", name: "Colgate University", location: "Hamilton, NY", type: "Private", ed: "2024-11-15", rd: "2025-01-15" },
+  { id: "middlebury", name: "Middlebury College", location: "Middlebury, VT", type: "Private", ed: "2024-11-15", ed2: "2025-01-01", rd: "2025-01-15" },
+  { id: "bowdoin", name: "Bowdoin College", location: "Brunswick, ME", type: "Private", ed: "2024-11-15", rd: "2025-01-08" },
+  { id: "williams", name: "Williams College", location: "Williamstown, MA", type: "Private", ed: "2024-11-15", rd: "2025-01-10" },
+  { id: "amherst", name: "Amherst College", location: "Amherst, MA", type: "Private", ed: "2024-11-01", rd: "2025-01-07" },
+  { id: "swarthmore", name: "Swarthmore College", location: "Swarthmore, PA", type: "Private", ed: "2024-11-15", rd: "2025-01-05" },
+  { id: "pomona", name: "Pomona College", location: "Claremont, CA", type: "Private", ed: "2024-11-15", rd: "2025-01-08" },
+  { id: "harvey-mudd", name: "Harvey Mudd College", location: "Claremont, CA", type: "Private", ed: "2024-11-15", rd: "2025-01-05" },
+  { id: "claremont-mckenna", name: "Claremont McKenna", location: "Claremont, CA", type: "Private", ed: "2024-11-01", rd: "2025-01-08" },
+  { id: "hamilton", name: "Hamilton College", location: "Clinton, NY", type: "Private", ed: "2024-11-15", rd: "2025-01-05" },
+  { id: "uchicago-booth", name: "Oberlin College", location: "Oberlin, OH", type: "Private", ed: "2024-11-15", rd: "2025-01-15" },
+  { id: "vassar", name: "Vassar College", location: "Poughkeepsie, NY", type: "Private", ed: "2024-11-15", rd: "2025-01-05" },
+  { id: "colby", name: "Colby College", location: "Waterville, ME", type: "Private", ed: "2024-11-15", rd: "2025-01-04" },
+  { id: "bates", name: "Bates College", location: "Lewiston, ME", type: "Private", ed: "2024-11-15", rd: "2025-01-15" },
+  { id: "haverford", name: "Haverford College", location: "Haverford, PA", type: "Private", ed: "2024-11-15", rd: "2025-01-15" },
+  { id: "uc-berkeley", name: "UC Berkeley", location: "Berkeley, CA", type: "Public", rd: "2024-11-30", scholarship: "2025-02-28" },
+  { id: "ucla", name: "UCLA", location: "Los Angeles, CA", type: "Public", rd: "2024-11-30", scholarship: "2025-03-02" },
+  { id: "ucsd", name: "UC San Diego", location: "La Jolla, CA", type: "Public", rd: "2024-11-30" },
+  { id: "ucsb", name: "UC Santa Barbara", location: "Santa Barbara, CA", type: "Public", rd: "2024-11-30" },
+  { id: "ucdavis", name: "UC Davis", location: "Davis, CA", type: "Public", rd: "2024-11-30" },
+  { id: "uci", name: "UC Irvine", location: "Irvine, CA", type: "Public", rd: "2024-11-30" },
+  { id: "umich", name: "U of Michigan", location: "Ann Arbor, MI", type: "Public", ea: "2024-11-01", rd: "2025-02-01", scholarship: "2024-11-01" },
+  { id: "unc", name: "UNC Chapel Hill", location: "Chapel Hill, NC", type: "Public", ea: "2024-10-15", rd: "2025-01-15", scholarship: "2024-10-15" },
+  { id: "virginia", name: "U of Virginia", location: "Charlottesville, VA", type: "Public", ea: "2024-11-01", rd: "2025-01-01", scholarship: "2024-11-01" },
+  { id: "georgia-tech", name: "Georgia Tech", location: "Atlanta, GA", type: "Public", ea: "2024-10-15", rd: "2025-01-07", scholarship: "2025-02-01" },
+  { id: "ut-austin", name: "UT Austin", location: "Austin, TX", type: "Public", ea: "2024-10-15", rd: "2024-12-01", scholarship: "2024-12-01" },
+  { id: "ohio-state", name: "Ohio State", location: "Columbus, OH", type: "Public", ea: "2024-11-01", rd: "2025-02-01", scholarship: "2024-12-01" },
+  { id: "penn-state", name: "Penn State", location: "State College, PA", type: "Public", rd: "2024-11-30", scholarship: "2024-11-30" },
+  { id: "purdue", name: "Purdue University", location: "West Lafayette, IN", type: "Public", ea: "2024-11-01", rd: "2025-02-01", scholarship: "2024-11-01" },
+  { id: "illinois", name: "U of Illinois", location: "Champaign, IL", type: "Public", ea: "2024-11-01", rd: "2025-01-05" },
+  { id: "minnesota", name: "U of Minnesota", location: "Minneapolis, MN", type: "Public", ea: "2024-11-01", rd: "2025-01-01" },
+  { id: "indiana", name: "Indiana University", location: "Bloomington, IN", type: "Public", ea: "2024-11-01", rd: "2025-02-01", scholarship: "2024-12-01" },
+  { id: "florida", name: "U of Florida", location: "Gainesville, FL", type: "Public", rd: "2024-11-01", scholarship: "2024-11-01" },
+  { id: "fsu", name: "Florida State", location: "Tallahassee, FL", type: "Public", rd: "2025-03-01", scholarship: "2025-01-15" },
+  { id: "colorado", name: "U of Colorado Boulder", location: "Boulder, CO", type: "Public", ea: "2024-11-15", rd: "2025-01-15" },
+  { id: "wisconsin", name: "U of Wisconsin", location: "Madison, WI", type: "Public", ea: "2024-11-01", rd: "2025-02-01" },
+  { id: "nyu", name: "NYU", location: "New York, NY", type: "Private", ea: "2024-11-01", ed: "2024-11-01", rd: "2025-01-05", scholarship: "2024-12-01" },
+  { id: "fordham", name: "Fordham University", location: "Bronx, NY", type: "Private", ea: "2024-11-01", rd: "2025-01-15" },
+  { id: "george-washington", name: "George Washington", location: "Washington, DC", type: "Private", ea: "2024-11-01", ed: "2024-11-01", rd: "2025-01-10" },
+  { id: "american", name: "American University", location: "Washington, DC", type: "Private", ea: "2024-11-01", ed: "2024-11-01", rd: "2025-01-15", scholarship: "2025-02-01" },
+  { id: "villanova", name: "Villanova University", location: "Villanova, PA", type: "Private", ea: "2024-11-01", rd: "2025-01-15" },
+  { id: "santa-clara", name: "Santa Clara University", location: "Santa Clara, CA", type: "Private", ea: "2024-11-01", rd: "2025-01-13" },
+  { id: "loyola-chicago", name: "Loyola U Chicago", location: "Chicago, IL", type: "Private", ea: "2024-11-01", rd: "2025-02-01", scholarship: "2024-11-01" },
+  { id: "drexel", name: "Drexel University", location: "Philadelphia, PA", type: "Private", ea: "2024-11-01", rd: "2025-03-01", scholarship: "2024-11-01" },
+  { id: "case-western", name: "Case Western Reserve", location: "Cleveland, OH", type: "Private", ea: "2024-11-01", ed: "2024-11-01", rd: "2025-01-15", scholarship: "2025-02-01" },
+  { id: "rochester", name: "U of Rochester", location: "Rochester, NY", type: "Private", ea: "2024-11-01", ed: "2024-11-01", rd: "2025-01-05" },
+  { id: "rensselaer", name: "RPI", location: "Troy, NY", type: "Private", ea: "2024-11-01", ed: "2024-11-01", rd: "2025-01-15", scholarship: "2024-11-01" },
+  { id: "worcester", name: "WPI", location: "Worcester, MA", type: "Private", ea: "2024-11-01", rd: "2025-02-01" },
+  { id: "stevens", name: "Stevens Institute", location: "Hoboken, NJ", type: "Private", ea: "2024-11-15", ed: "2024-11-15", rd: "2025-02-01", scholarship: "2025-01-15" },
+  { id: "bucknell", name: "Bucknell University", location: "Lewisburg, PA", type: "Private", ed: "2024-11-15", rd: "2025-01-15" },
+  { id: "lafayette", name: "Lafayette College", location: "Easton, PA", type: "Private", ed: "2024-11-15", rd: "2025-02-01" },
+  { id: "denison", name: "Denison University", location: "Granville, OH", type: "Private", ea: "2024-11-15", rd: "2025-02-01", scholarship: "2025-01-15" },
+  { id: "ohio-wesleyan", name: "Dickinson College", location: "Carlisle, PA", type: "Private", ed: "2024-11-15", rd: "2025-02-01", scholarship: "2025-02-01" },
 ];
 
-type Tab = "dashboard" | "schools" | "reminders";
-
-const TYPE_COLORS: Record<string, { bg: string; text: string; border: string }> = {
-  ED: { bg: "#fff0f0", text: "#c0392b", border: "#e74c3c" },
-  EA: { bg: "#fff8e1", text: "#d68910", border: "#f39c12" },
-  RD: { bg: "#eaf4fb", text: "#1a5276", border: "#2980b9" },
-  FA: { bg: "#f0fff4", text: "#1e8449", border: "#27ae60" },
-};
-
-function daysUntil(dateStr: string): number {
+function getDaysUntil(dateStr: string): number {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const target = new Date(dateStr + "T00:00:00");
-  return Math.ceil((target.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+  const diff = target.getTime() - today.getTime();
+  return Math.ceil(diff / (1000 * 60 * 60 * 24));
 }
 
 function formatDate(dateStr: string): string {
@@ -509,766 +140,618 @@ function formatDate(dateStr: string): string {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
-function urgencyLabel(days: number): { text: string; color: string } {
-  if (days < 0) return { text: "Past", color: "#999" };
-  if (days === 0) return { text: "Today!", color: "#c0392b" };
-  if (days <= 7) return { text: `${days}d left`, color: "#c0392b" };
-  if (days <= 14) return { text: `${days}d left`, color: "#d35400" };
-  if (days <= 30) return { text: `${days}d left`, color: "#d68910" };
-  return { text: `${days} days`, color: "#555" };
+function getDeadlineColor(days: number): string {
+  if (days < 0) return "#9ca3af";
+  if (days <= 7) return "#ef4444";
+  if (days <= 14) return "#f97316";
+  if (days <= 30) return "#eab308";
+  return "#22c55e";
+}
+
+function getDeadlineBadgeStyle(type: string): React.CSSProperties {
+  const map: Record<string, React.CSSProperties> = {
+    EA: { background: "#dbeafe", color: "#1d4ed8", border: "1px solid #bfdbfe" },
+    ED: { background: "#fce7f3", color: "#be185d", border: "1px solid #fbcfe8" },
+    "ED II": { background: "#f3e8ff", color: "#7c3aed", border: "1px solid #e9d5ff" },
+    RD: { background: "#d1fae5", color: "#065f46", border: "1px solid #a7f3d0" },
+    Scholarship: { background: "#fef3c7", color: "#92400e", border: "1px solid #fde68a" },
+  };
+  return map[type] || { background: "#f3f4f6", color: "#374151" };
 }
 
 export default function Home() {
-  const [tab, setTab] = useState<Tab>("dashboard");
-  const [mySchools, setMySchools] = useState<MySchool[]>([]);
+  const [userEmail, setUserEmail] = useState<string>("");
+  const [step, setStep] = useState<"loading" | "auth" | "onboard-schools" | "onboard-reminders" | "dashboard">("loading");
+  const [authMode, setAuthMode] = useState<"login" | "signup">("signup");
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authError, setAuthError] = useState("");
+  const [authLoading, setAuthLoading] = useState(false);
+
+  const [selectedColleges, setSelectedColleges] = useState<Set<string>>(new Set());
+  const [selectedDeadlineTypes, setSelectedDeadlineTypes] = useState<Record<string, string[]>>({});
   const [searchQuery, setSearchQuery] = useState("");
-  const [email, setEmail] = useState("");
-  const [phone, setPhone] = useState("");
-  const [reminderEmail, setReminderEmail] = useState("");
-  const [reminderPhone, setReminderPhone] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [submitMsg, setSubmitMsg] = useState("");
-  const [showOnboard, setShowOnboard] = useState(false);
-  const [filterType, setFilterType] = useState<string>("ALL");
-  const [sortBy, setSortBy] = useState<"date" | "name">("date");
+  const [filterType, setFilterType] = useState<"All" | "Private" | "Public">("All");
+
+  const [reminderSettings, setReminderSettings] = useState<ReminderSettings>({
+    email: "",
+    phone: "",
+    emailReminders: true,
+    smsReminders: false,
+  });
+
+  const [userSchools, setUserSchools] = useState<UserSchool[]>([]);
+  const [loadingSchools, setLoadingSchools] = useState(false);
+  const [savingSchools, setSavingSchools] = useState(false);
+  const [activeFilter, setActiveFilter] = useState<"all" | "upcoming" | "past">("upcoming");
+  const [dashboardSearch, setDashboardSearch] = useState("");
+  const [now, setNow] = useState(new Date());
 
   useEffect(() => {
-    const saved = localStorage.getItem("edutracker_schools");
-    if (saved) setMySchools(JSON.parse(saved));
-    const savedEmail = localStorage.getItem("edutracker_email");
-    if (savedEmail) setEmail(savedEmail);
-    const savedPhone = localStorage.getItem("edutracker_phone");
-    if (savedPhone) setPhone(savedPhone);
-
-    // Track page visit
-    fetch("/api/track", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: window.location.pathname }),
-    }).catch(() => {});
+    fetch("/api/track", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: window.location.pathname }) }).catch(() => {});
   }, []);
 
-  const saveSchools = useCallback((schools: MySchool[]) => {
-    setMySchools(schools);
-    localStorage.setItem("edutracker_schools", JSON.stringify(schools));
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 60000);
+    return () => clearInterval(timer);
   }, []);
 
-  const addSchool = useCallback((collegeId: string) => {
-    const already = mySchools.find((s) => s.collegeId === collegeId);
-    if (already) return;
-    const updated = [...mySchools, { collegeId, addedAt: new Date().toISOString() }];
-    saveSchools(updated);
-  }, [mySchools, saveSchools]);
-
-  const removeSchool = useCallback((collegeId: string) => {
-    saveSchools(mySchools.filter((s) => s.collegeId !== collegeId));
-  }, [mySchools, saveSchools]);
-
-  const isAdded = (collegeId: string) => mySchools.some((s) => s.collegeId === collegeId);
-
-  const myColleges = COLLEGES.filter((c) => isAdded(c.id));
-
-  const upcomingDeadlines: UpcomingDeadline[] = myColleges
-    .flatMap((college) =>
-      college.deadlines.map((dl) => ({
-        college,
-        deadline: dl,
-        daysUntil: daysUntil(dl.date),
-      }))
-    )
-    .filter((item) => item.daysUntil >= 0)
-    .filter((item) => filterType === "ALL" || item.deadline.type === filterType)
-    .sort((a, b) => {
-      if (sortBy === "date") return a.daysUntil - b.daysUntil;
-      return a.college.name.localeCompare(b.college.name);
-    });
-
-  const filteredColleges = COLLEGES.filter(
-    (c) =>
-      c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      c.location.toLowerCase().includes(searchQuery.toLowerCase())
-  );
-
-  const handleReminderSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!reminderEmail) {
-      setSubmitMsg("Please enter your email.");
-      return;
-    }
-    if (mySchools.length === 0) {
-      setSubmitMsg("Please add some schools first.");
-      return;
-    }
-    setSubmitting(true);
-    setSubmitMsg("");
-    localStorage.setItem("edutracker_email", reminderEmail);
-    localStorage.setItem("edutracker_phone", reminderPhone);
-    setEmail(reminderEmail);
-    setPhone(reminderPhone);
-
+  const checkAuth = useCallback(async () => {
     try {
-      const subs: ReminderSub[] = [];
-      myColleges.forEach((college) => {
-        college.deadlines.forEach((dl) => {
-          if (daysUntil(dl.date) > 0) {
-            subs.push({
-              email: reminderEmail,
-              phone: reminderPhone || undefined,
-              collegeId: college.id,
-              deadlineType: dl.type,
-              deadlineDate: dl.date,
+      const res = await fetch("/api/auth");
+      const data = await res.json();
+      if (data.email) {
+        setUserEmail(data.email);
+        setReminderSettings(prev => ({ ...prev, email: data.email }));
+        await loadUserSchools();
+        setStep("dashboard");
+      } else {
+        setStep("auth");
+      }
+    } catch {
+      setStep("auth");
+    }
+  }, []);
+
+  useEffect(() => {
+    checkAuth();
+  }, [checkAuth]);
+
+  const loadUserSchools = async () => {
+    setLoadingSchools(true);
+    try {
+      const res = await fetch("/api/schools");
+      if (res.ok) {
+        const data = await res.json();
+        setUserSchools(data.schools || []);
+      }
+    } catch {
+      // ignore
+    } finally {
+      setLoadingSchools(false);
+    }
+  };
+
+  const handleAuth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError("");
+    setAuthLoading(true);
+    try {
+      const res = await fetch("/api/auth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: authMode, email: authEmail, password: authPassword }),
+      });
+      const data = await res.json();
+      if (data.error) {
+        setAuthError(data.error);
+      } else {
+        setUserEmail(data.email);
+        setReminderSettings(prev => ({ ...prev, email: data.email }));
+        const schoolsRes = await fetch("/api/schools");
+        if (schoolsRes.ok) {
+          const schoolsData = await schoolsRes.json();
+          if (schoolsData.schools && schoolsData.schools.length > 0) {
+            setUserSchools(schoolsData.schools);
+            setStep("dashboard");
+          } else {
+            setStep("onboard-schools");
+          }
+        } else {
+          setStep("onboard-schools");
+        }
+      }
+    } catch {
+      setAuthError("Something went wrong. Please try again.");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    await fetch("/api/auth", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode: "logout" }) });
+    setUserEmail("");
+    setUserSchools([]);
+    setSelectedColleges(new Set());
+    setStep("auth");
+  };
+
+  const toggleCollege = (collegeId: string) => {
+    setSelectedColleges(prev => {
+      const next = new Set(prev);
+      if (next.has(collegeId)) {
+        next.delete(collegeId);
+        setSelectedDeadlineTypes(dt => {
+          const n = { ...dt };
+          delete n[collegeId];
+          return n;
+        });
+      } else {
+        next.add(collegeId);
+        const college = COLLEGES.find(c => c.id === collegeId);
+        if (college) {
+          const types: string[] = [];
+          if (college.ea) types.push("EA");
+          if (college.ed) types.push("ED");
+          if (college.ed2) types.push("ED II");
+          types.push("RD");
+          if (college.scholarship) types.push("Scholarship");
+          setSelectedDeadlineTypes(dt => ({ ...dt, [collegeId]: types }));
+        }
+      }
+      return next;
+    });
+  };
+
+  const toggleDeadlineType = (collegeId: string, type: string) => {
+    setSelectedDeadlineTypes(prev => {
+      const current = prev[collegeId] || [];
+      const exists = current.includes(type);
+      return {
+        ...prev,
+        [collegeId]: exists ? current.filter(t => t !== type) : [...current, type],
+      };
+    });
+  };
+
+  const handleSaveSchools = async () => {
+    setSavingSchools(true);
+    try {
+      const entries: Array<{ collegeId: string; collegeName: string; deadlineType: string; deadlineDate: string; emailReminder: boolean; smsReminder: boolean; phone: string; email: string }> = [];
+
+      selectedColleges.forEach(collegeId => {
+        const college = COLLEGES.find(c => c.id === collegeId);
+        if (!college) return;
+        const types = selectedDeadlineTypes[collegeId] || [];
+        types.forEach(type => {
+          let date = "";
+          if (type === "EA" && college.ea) date = college.ea;
+          else if (type === "ED" && college.ed) date = college.ed;
+          else if (type === "ED II" && college.ed2) date = college.ed2;
+          else if (type === "RD") date = college.rd;
+          else if (type === "Scholarship" && college.scholarship) date = college.scholarship;
+          if (date) {
+            entries.push({
+              collegeId,
+              collegeName: college.name,
+              deadlineType: type,
+              deadlineDate: date,
+              emailReminder: reminderSettings.emailReminders,
+              smsReminder: reminderSettings.smsReminders,
+              phone: reminderSettings.phone,
+              email: reminderSettings.email,
             });
           }
         });
       });
 
-      const res = await fetch("/api/reminders", {
+      await fetch("/api/schools", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: reminderEmail, phone: reminderPhone, subscriptions: subs }),
+        body: JSON.stringify({ schools: entries }),
       });
 
-      if (res.ok) {
-        setSubmitMsg(`✅ Reminders set for ${subs.length} deadline(s)! We'll email you at 30, 14, 7, and 1 day before each deadline.`);
-      } else {
-        const json = await res.json().catch(() => ({}));
-        setSubmitMsg(json.error || "✅ Reminder preferences saved locally! (Server sync pending)");
-      }
+      await loadUserSchools();
+      setStep("dashboard");
     } catch {
-      setSubmitMsg("✅ Reminder preferences saved locally!");
+      // ignore
+    } finally {
+      setSavingSchools(false);
     }
-    setSubmitting(false);
   };
 
-  const nextDeadline = upcomingDeadlines[0];
+  const handleDeleteSchool = async (id: number) => {
+    try {
+      await fetch(`/api/schools?id=${id}`, { method: "DELETE" });
+      setUserSchools(prev => prev.filter(s => s.id !== id));
+    } catch {
+      // ignore
+    }
+  };
 
-  return (
-    <div style={{ minHeight: "100vh", background: "#f5f7fa", fontFamily: "'Segoe UI', system-ui, sans-serif" }}>
-      {/* Header */}
-      <header style={{
-        background: "linear-gradient(135deg, #1a237e 0%, #283593 60%, #3949ab 100%)",
-        color: "white",
-        padding: "0 24px",
-        boxShadow: "0 2px 12px rgba(0,0,0,0.2)",
-      }}>
-        <div style={{ maxWidth: 960, margin: "0 auto" }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 0 0" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <div style={{ fontSize: 28 }}>🎓</div>
-              <div>
-                <div style={{ fontWeight: 800, fontSize: 22, letterSpacing: -0.5 }}>Edutracker</div>
-                <div style={{ fontSize: 12, opacity: 0.8 }}>College Application Deadline Manager</div>
-              </div>
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              {email && (
-                <div style={{ fontSize: 13, opacity: 0.85, background: "rgba(255,255,255,0.15)", padding: "4px 10px", borderRadius: 20 }}>
-                  📧 {email}
-                </div>
-              )}
-              <div style={{ background: "rgba(255,255,255,0.2)", borderRadius: 20, padding: "4px 12px", fontSize: 13 }}>
-                {mySchools.length} school{mySchools.length !== 1 ? "s" : ""}
-              </div>
-            </div>
+  const getCountdown = (dateStr: string) => {
+    const target = new Date(dateStr + "T00:00:00");
+    const diff = target.getTime() - now.getTime();
+    if (diff < 0) return "Past";
+    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+    if (days === 0) return "Today!";
+    if (days === 1) return "1 day";
+    return `${days} days`;
+  };
+
+  const filteredColleges = COLLEGES.filter(c => {
+    const matchesSearch = c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      c.location.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesType = filterType === "All" || c.type === filterType;
+    return matchesSearch && matchesType;
+  });
+
+  const deadlines: Deadline[] = userSchools.map(s => ({
+    collegeId: s.college_id,
+    collegeName: s.college_name,
+    type: s.deadline_type,
+    date: s.deadline_date,
+    daysUntil: getDaysUntil(s.deadline_date),
+  }));
+
+  const filteredDeadlines = deadlines
+    .filter(d => {
+      if (activeFilter === "upcoming") return d.daysUntil >= 0;
+      if (activeFilter === "past") return d.daysUntil < 0;
+      return true;
+    })
+    .filter(d => d.collegeName.toLowerCase().includes(dashboardSearch.toLowerCase()) ||
+      d.type.toLowerCase().includes(dashboardSearch.toLowerCase()))
+    .sort((a, b) => a.daysUntil - b.daysUntil);
+
+  const upcomingCount = deadlines.filter(d => d.daysUntil >= 0).length;
+  const urgentCount = deadlines.filter(d => d.daysUntil >= 0 && d.daysUntil <= 14).length;
+
+  if (step === "loading") {
+    return (
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)" }}>
+        <div style={{ textAlign: "center", color: "white" }}>
+          <div style={{ fontSize: 48, marginBottom: 16 }}>🎓</div>
+          <div style={{ fontSize: 20, fontWeight: 600 }}>Loading Edutracker...</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (step === "auth") {
+    return (
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)", padding: 16 }}>
+        <div style={{ background: "white", borderRadius: 20, padding: "40px 36px", width: "100%", maxWidth: 420, boxShadow: "0 25px 50px rgba(0,0,0,0.25)" }}>
+          <div style={{ textAlign: "center", marginBottom: 32 }}>
+            <div style={{ fontSize: 48, marginBottom: 8 }}>🎓</div>
+            <h1 style={{ fontSize: 28, fontWeight: 800, color: "#1e1b4b", margin: 0 }}>Edutracker</h1>
+            <p style={{ color: "#6b7280", marginTop: 6, fontSize: 14 }}>Never miss a college application deadline</p>
           </div>
-          <nav style={{ display: "flex", gap: 4, paddingTop: 12 }}>
-            {(["dashboard", "schools", "reminders"] as Tab[]).map((t) => (
-              <button
-                key={t}
-                onClick={() => setTab(t)}
-                style={{
-                  background: tab === t ? "white" : "transparent",
-                  color: tab === t ? "#1a237e" : "rgba(255,255,255,0.85)",
-                  border: "none",
-                  padding: "10px 20px",
-                  borderRadius: "8px 8px 0 0",
-                  fontWeight: tab === t ? 700 : 500,
-                  fontSize: 14,
-                  cursor: "pointer",
-                  textTransform: "capitalize",
-                  transition: "all 0.15s",
-                }}
-              >
-                {t === "dashboard" ? "📋 Dashboard" : t === "schools" ? "🏛️ Schools" : "🔔 Reminders"}
+
+          <div style={{ display: "flex", background: "#f3f4f6", borderRadius: 10, padding: 4, marginBottom: 24 }}>
+            {(["signup", "login"] as const).map(mode => (
+              <button key={mode} onClick={() => setAuthMode(mode)} style={{ flex: 1, padding: "8px 0", borderRadius: 8, border: "none", cursor: "pointer", fontWeight: 600, fontSize: 14, transition: "all 0.2s", background: authMode === mode ? "white" : "transparent", color: authMode === mode ? "#4f46e5" : "#6b7280", boxShadow: authMode === mode ? "0 1px 3px rgba(0,0,0,0.1)" : "none" }}>
+                {mode === "signup" ? "Sign Up" : "Log In"}
               </button>
             ))}
-          </nav>
+          </div>
+
+          <form onSubmit={handleAuth}>
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#374151", marginBottom: 6 }}>Email</label>
+              <input type="email" value={authEmail} onChange={e => setAuthEmail(e.target.value)} required placeholder="you@example.com" style={{ width: "100%", padding: "10px 14px", border: "1.5px solid #e5e7eb", borderRadius: 8, fontSize: 14, outline: "none", boxSizing: "border-box", transition: "border-color 0.2s" }} onFocus={e => e.target.style.borderColor = "#4f46e5"} onBlur={e => e.target.style.borderColor = "#e5e7eb"} />
+            </div>
+            <div style={{ marginBottom: 20 }}>
+              <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#374151", marginBottom: 6 }}>Password</label>
+              <input type="password" value={authPassword} onChange={e => setAuthPassword(e.target.value)} required placeholder="••••••••" style={{ width: "100%", padding: "10px 14px", border: "1.5px solid #e5e7eb", borderRadius: 8, fontSize: 14, outline: "none", boxSizing: "border-box" }} onFocus={e => e.target.style.borderColor = "#4f46e5"} onBlur={e => e.target.style.borderColor = "#e5e7eb"} />
+            </div>
+            {authError && <div style={{ background: "#fef2f2", color: "#dc2626", padding: "10px 12px", borderRadius: 8, fontSize: 13, marginBottom: 16, border: "1px solid #fecaca" }}>{authError}</div>}
+            <button type="submit" disabled={authLoading} style={{ width: "100%", padding: "12px 0", background: authLoading ? "#a5b4fc" : "linear-gradient(135deg, #4f46e5, #7c3aed)", color: "white", border: "none", borderRadius: 10, fontSize: 15, fontWeight: 700, cursor: authLoading ? "not-allowed" : "pointer", transition: "all 0.2s" }}>
+              {authLoading ? "Please wait..." : authMode === "signup" ? "Create Account" : "Sign In"}
+            </button>
+          </form>
         </div>
-      </header>
+      </div>
+    );
+  }
 
-      <main style={{ maxWidth: 960, margin: "0 auto", padding: "24px 16px 48px" }}>
-        {/* DASHBOARD TAB */}
-        {tab === "dashboard" && (
-          <div>
-            {mySchools.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "64px 24px" }}>
-                <div style={{ fontSize: 64, marginBottom: 16 }}>🏫</div>
-                <h2 style={{ fontSize: 24, fontWeight: 700, color: "#1a237e", marginBottom: 8 }}>
-                  No schools added yet
-                </h2>
-                <p style={{ color: "#666", marginBottom: 24, fontSize: 16 }}>
-                  Add your target colleges to track their deadlines and get reminders.
-                </p>
-                <button
-                  onClick={() => setTab("schools")}
-                  style={{
-                    background: "#1a237e",
-                    color: "white",
-                    border: "none",
-                    padding: "12px 28px",
-                    borderRadius: 8,
-                    fontWeight: 700,
-                    fontSize: 16,
-                    cursor: "pointer",
-                  }}
-                >
-                  Browse Schools →
-                </button>
-              </div>
-            ) : (
-              <>
-                {/* Stats row */}
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginBottom: 24 }}>
-                  {[
-                    { label: "Schools Tracked", value: mySchools.length, icon: "🏛️", color: "#1a237e" },
-                    { label: "Upcoming Deadlines", value: upcomingDeadlines.length, icon: "📅", color: "#d35400" },
-                    { label: "Next Deadline", value: nextDeadline ? `${nextDeadline.daysUntil}d` : "—", icon: "⏰", color: nextDeadline && nextDeadline.daysUntil <= 7 ? "#c0392b" : "#27ae60" },
-                    { label: "Reminders Active", value: email ? "Yes" : "No", icon: "🔔", color: email ? "#27ae60" : "#999" },
-                  ].map((stat) => (
-                    <div key={stat.label} style={{
-                      background: "white",
-                      borderRadius: 12,
-                      padding: "16px 20px",
-                      boxShadow: "0 1px 4px rgba(0,0,0,0.08)",
-                      borderLeft: `4px solid ${stat.color}`,
-                    }}>
-                      <div style={{ fontSize: 24, marginBottom: 4 }}>{stat.icon}</div>
-                      <div style={{ fontSize: 24, fontWeight: 800, color: stat.color }}>{stat.value}</div>
-                      <div style={{ fontSize: 12, color: "#666", fontWeight: 500 }}>{stat.label}</div>
-                    </div>
-                  ))}
-                </div>
+  if (step === "onboard-schools") {
+    return (
+      <div style={{ minHeight: "100vh", background: "#f8fafc", padding: "0 0 80px" }}>
+        <div style={{ background: "linear-gradient(135deg, #4f46e5, #7c3aed)", padding: "32px 24px", color: "white", textAlign: "center" }}>
+          <div style={{ fontSize: 40, marginBottom: 8 }}>🏫</div>
+          <h1 style={{ fontSize: 26, fontWeight: 800, margin: 0 }}>Choose Your Target Schools</h1>
+          <p style={{ opacity: 0.85, marginTop: 6, fontSize: 14 }}>Select schools and which deadlines to track</p>
+          <div style={{ marginTop: 12, display: "inline-block", background: "rgba(255,255,255,0.15)", borderRadius: 20, padding: "4px 16px", fontSize: 13 }}>
+            {selectedColleges.size} school{selectedColleges.size !== 1 ? "s" : ""} selected
+          </div>
+        </div>
 
-                {/* Next up banner */}
-                {nextDeadline && nextDeadline.daysUntil <= 30 && (
-                  <div style={{
-                    background: nextDeadline.daysUntil <= 7 ? "linear-gradient(135deg, #c0392b, #e74c3c)" : "linear-gradient(135deg, #d35400, #e67e22)",
-                    color: "white",
-                    borderRadius: 12,
-                    padding: "16px 20px",
-                    marginBottom: 20,
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 12,
-                  }}>
-                    <div style={{ fontSize: 32 }}>⚠️</div>
-                    <div>
-                      <div style={{ fontWeight: 700, fontSize: 16 }}>
-                        {nextDeadline.college.name} — {nextDeadline.deadline.label}
-                      </div>
-                      <div style={{ opacity: 0.9, fontSize: 14 }}>
-                        Due {formatDate(nextDeadline.deadline.date)} · {nextDeadline.daysUntil === 0 ? "TODAY!" : `${nextDeadline.daysUntil} day${nextDeadline.daysUntil === 1 ? "" : "s"} remaining`}
+        <div style={{ maxWidth: 900, margin: "0 auto", padding: "20px 16px" }}>
+          <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
+            <input value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder="🔍 Search schools..." style={{ flex: 1, minWidth: 200, padding: "10px 14px", border: "1.5px solid #e5e7eb", borderRadius: 10, fontSize: 14, outline: "none" }} />
+            {(["All", "Private", "Public"] as const).map(t => (
+              <button key={t} onClick={() => setFilterType(t)} style={{ padding: "10px 18px", borderRadius: 10, border: "1.5px solid", borderColor: filterType === t ? "#4f46e5" : "#e5e7eb", background: filterType === t ? "#4f46e5" : "white", color: filterType === t ? "white" : "#6b7280", fontWeight: 600, fontSize: 14, cursor: "pointer" }}>
+                {t}
+              </button>
+            ))}
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 12 }}>
+            {filteredColleges.map(college => {
+              const isSelected = selectedColleges.has(college.id);
+              const selectedTypes = selectedDeadlineTypes[college.id] || [];
+              const availableTypes: string[] = [];
+              if (college.ea) availableTypes.push("EA");
+              if (college.ed) availableTypes.push("ED");
+              if (college.ed2) availableTypes.push("ED II");
+              availableTypes.push("RD");
+              if (college.scholarship) availableTypes.push("Scholarship");
+
+              return (
+                <div key={college.id} style={{ background: "white", borderRadius: 12, border: `2px solid ${isSelected ? "#4f46e5" : "#e5e7eb"}`, overflow: "hidden", transition: "all 0.2s", boxShadow: isSelected ? "0 4px 12px rgba(79,70,229,0.15)" : "0 1px 3px rgba(0,0,0,0.05)" }}>
+                  <div onClick={() => toggleCollege(college.id)} style={{ padding: "14px 16px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 700, fontSize: 15, color: "#1e1b4b" }}>{college.name}</div>
+                      <div style={{ fontSize: 12, color: "#6b7280", marginTop: 2 }}>{college.location}</div>
+                      <div style={{ marginTop: 4 }}>
+                        <span style={{ fontSize: 11, background: college.type === "Public" ? "#dbeafe" : "#fce7f3", color: college.type === "Public" ? "#1d4ed8" : "#be185d", padding: "2px 8px", borderRadius: 20, fontWeight: 600 }}>{college.type}</span>
                       </div>
                     </div>
-                  </div>
-                )}
-
-                {/* Filters */}
-                <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
-                  <span style={{ fontSize: 13, color: "#666", fontWeight: 500 }}>Filter:</span>
-                  {["ALL", "ED", "EA", "RD", "FA"].map((f) => (
-                    <button
-                      key={f}
-                      onClick={() => setFilterType(f)}
-                      style={{
-                        padding: "6px 14px",
-                        borderRadius: 20,
-                        border: filterType === f ? "2px solid #1a237e" : "2px solid #ddd",
-                        background: filterType === f ? "#1a237e" : "white",
-                        color: filterType === f ? "white" : "#444",
-                        fontWeight: 600,
-                        fontSize: 12,
-                        cursor: "pointer",
-                      }}
-                    >
-                      {f === "ALL" ? "All" : f === "FA" ? "Financial Aid" : f === "ED" ? "Early Decision" : f === "EA" ? "Early Action" : "Regular"}
-                    </button>
-                  ))}
-                  <span style={{ marginLeft: "auto", fontSize: 13, color: "#666", fontWeight: 500 }}>Sort:</span>
-                  {(["date", "name"] as const).map((s) => (
-                    <button
-                      key={s}
-                      onClick={() => setSortBy(s)}
-                      style={{
-                        padding: "6px 14px",
-                        borderRadius: 20,
-                        border: sortBy === s ? "2px solid #1a237e" : "2px solid #ddd",
-                        background: sortBy === s ? "#1a237e" : "white",
-                        color: sortBy === s ? "white" : "#444",
-                        fontWeight: 600,
-                        fontSize: 12,
-                        cursor: "pointer",
-                      }}
-                    >
-                      {s === "date" ? "By Date" : "By Name"}
-                    </button>
-                  ))}
-                </div>
-
-                {/* Deadline list */}
-                {upcomingDeadlines.length === 0 ? (
-                  <div style={{ textAlign: "center", padding: 40, color: "#999" }}>
-                    No upcoming deadlines for this filter.
-                  </div>
-                ) : (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                    {upcomingDeadlines.map((item, idx) => {
-                      const col = TYPE_COLORS[item.deadline.type];
-                      const urg = urgencyLabel(item.daysUntil);
-                      return (
-                        <div
-                          key={`${item.college.id}-${item.deadline.type}-${item.deadline.date}-${idx}`}
-                          style={{
-                            background: "white",
-                            borderRadius: 10,
-                            padding: "14px 18px",
-                            boxShadow: "0 1px 4px rgba(0,0,0,0.07)",
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 14,
-                            borderLeft: `4px solid ${col.border}`,
-                          }}
-                        >
-                          <div style={{
-                            background: col.bg,
-                            color: col.text,
-                            fontWeight: 800,
-                            fontSize: 11,
-                            padding: "4px 8px",
-                            borderRadius: 6,
-                            minWidth: 36,
-                            textAlign: "center",
-                            border: `1px solid ${col.border}`,
-                          }}>
-                            {item.deadline.type}
-                          </div>
-                          <div style={{ flex: 1 }}>
-                            <div style={{ fontWeight: 700, fontSize: 15, color: "#1a237e" }}>{item.college.name}</div>
-                            <div style={{ fontSize: 12, color: "#666" }}>{item.deadline.label} · {item.college.location}</div>
-                          </div>
-                          <div style={{ textAlign: "right" }}>
-                            <div style={{ fontWeight: 700, fontSize: 14, color: "#222" }}>{formatDate(item.deadline.date)}</div>
-                            <div style={{ fontSize: 12, fontWeight: 700, color: urg.color }}>{urg.text}</div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-
-                {!email && (
-                  <div style={{
-                    marginTop: 24,
-                    background: "linear-gradient(135deg, #e8eaf6, #ede7f6)",
-                    borderRadius: 12,
-                    padding: "20px 24px",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    flexWrap: "wrap",
-                    gap: 12,
-                  }}>
-                    <div>
-                      <div style={{ fontWeight: 700, fontSize: 16, color: "#1a237e" }}>🔔 Get deadline reminders</div>
-                      <div style={{ fontSize: 13, color: "#555", marginTop: 2 }}>We'll email you at 30, 14, 7, and 1 day before each deadline</div>
+                    <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${isSelected ? "#4f46e5" : "#d1d5db"}`, background: isSelected ? "#4f46e5" : "white", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginLeft: 8 }}>
+                      {isSelected && <span style={{ color: "white", fontSize: 13, lineHeight: 1 }}>✓</span>}
                     </div>
-                    <button
-                      onClick={() => setTab("reminders")}
-                      style={{
-                        background: "#1a237e",
-                        color: "white",
-                        border: "none",
-                        padding: "10px 22px",
-                        borderRadius: 8,
-                        fontWeight: 700,
-                        fontSize: 14,
-                        cursor: "pointer",
-                      }}
-                    >
-                      Set Up Reminders →
-                    </button>
                   </div>
-                )}
-              </>
-            )}
+
+                  {isSelected && (
+                    <div style={{ padding: "0 16px 14px", borderTop: "1px solid #f3f4f6" }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: "#6b7280", marginBottom: 6, marginTop: 10 }}>TRACK DEADLINES:</div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                        {availableTypes.map(type => {
+                          const active = selectedTypes.includes(type);
+                          let dateStr = "";
+                          if (type === "EA" && college.ea) dateStr = formatDate(college.ea);
+                          else if (type === "ED" && college.ed) dateStr = formatDate(college.ed);
+                          else if (type === "ED II" && college.ed2) dateStr = formatDate(college.ed2);
+                          else if (type === "RD") dateStr = formatDate(college.rd);
+                          else if (type === "Scholarship" && college.scholarship) dateStr = formatDate(college.scholarship);
+                          return (
+                            <button key={type} onClick={() => toggleDeadlineType(college.id, type)} style={{ padding: "4px 10px", borderRadius: 20, border: `1.5px solid ${active ? "#4f46e5" : "#e5e7eb"}`, background: active ? "#eef2ff" : "white", color: active ? "#4f46e5" : "#6b7280", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
+                              {type} · {dateStr}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {selectedColleges.size > 0 && (
+          <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: "white", borderTop: "1px solid #e5e7eb", padding: "16px 24px", display: "flex", justifyContent: "center" }}>
+            <button onClick={() => setStep("onboard-reminders")} style={{ background: "linear-gradient(135deg, #4f46e5, #7c3aed)", color: "white", border: "none", borderRadius: 12, padding: "14px 40px", fontSize: 16, fontWeight: 700, cursor: "pointer" }}>
+              Set Up Reminders →
+            </button>
           </div>
         )}
+      </div>
+    );
+  }
 
-        {/* SCHOOLS TAB */}
-        {tab === "schools" && (
-          <div>
-            <div style={{ marginBottom: 20 }}>
-              <h2 style={{ fontSize: 22, fontWeight: 800, color: "#1a237e", marginBottom: 4 }}>Browse Colleges</h2>
-              <p style={{ color: "#666", fontSize: 14 }}>Select schools to track their application deadlines.</p>
-            </div>
+  if (step === "onboard-reminders") {
+    const totalDeadlines = Array.from(selectedColleges).reduce((sum, id) => {
+      return sum + (selectedDeadlineTypes[id]?.length || 0);
+    }, 0);
 
-            {/* My Schools section */}
-            {myColleges.length > 0 && (
-              <div style={{ marginBottom: 28 }}>
-                <div style={{ fontWeight: 700, fontSize: 15, color: "#1a237e", marginBottom: 10 }}>
-                  📌 My Schools ({myColleges.length})
-                </div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                  {myColleges.map((college) => (
-                    <div
-                      key={college.id}
-                      style={{
-                        background: "#e8eaf6",
-                        border: "1px solid #c5cae9",
-                        borderRadius: 20,
-                        padding: "6px 14px",
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 8,
-                        fontSize: 13,
-                        fontWeight: 500,
-                        color: "#1a237e",
-                      }}
-                    >
-                      {college.name}
-                      <button
-                        onClick={() => removeSchool(college.id)}
-                        style={{
-                          background: "none",
-                          border: "none",
-                          color: "#c0392b",
-                          cursor: "pointer",
-                          fontWeight: 700,
-                          fontSize: 16,
-                          lineHeight: 1,
-                          padding: "0 2px",
-                        }}
-                        title="Remove"
-                      >
-                        ×
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
+    return (
+      <div style={{ minHeight: "100vh", background: "#f8fafc", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+        <div style={{ background: "white", borderRadius: 20, padding: "36px 32px", width: "100%", maxWidth: 500, boxShadow: "0 10px 30px rgba(0,0,0,0.1)" }}>
+          <div style={{ textAlign: "center", marginBottom: 28 }}>
+            <div style={{ fontSize: 44, marginBottom: 10 }}>🔔</div>
+            <h2 style={{ fontSize: 24, fontWeight: 800, color: "#1e1b4b", margin: 0 }}>Set Up Reminders</h2>
+            <p style={{ color: "#6b7280", fontSize: 14, marginTop: 8 }}>
+              We'll remind you 30, 14, 7, and 1 day before each of your <strong>{totalDeadlines} deadlines</strong>
+            </p>
+          </div>
+
+          <div style={{ background: "#f8fafc", borderRadius: 12, padding: "16px 18px", marginBottom: 20, border: "1px solid #e5e7eb" }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#374151", marginBottom: 12 }}>📧 Email Reminders</div>
+            <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", marginBottom: 12 }}>
+              <input type="checkbox" checked={reminderSettings.emailReminders} onChange={e => setReminderSettings(prev => ({ ...prev, emailReminders: e.target.checked }))} style={{ width: 18, height: 18, cursor: "pointer" }} />
+              <span style={{ fontSize: 14, color: "#374151" }}>Enable email reminders</span>
+            </label>
+            {reminderSettings.emailReminders && (
+              <input type="email" value={reminderSettings.email} onChange={e => setReminderSettings(prev => ({ ...prev, email: e.target.value }))} placeholder="your@email.com" style={{ width: "100%", padding: "10px 12px", border: "1.5px solid #e5e7eb", borderRadius: 8, fontSize: 14, outline: "none", boxSizing: "border-box" }} />
             )}
+          </div>
 
-            {/* Search */}
-            <div style={{ position: "relative", marginBottom: 16 }}>
-              <input
-                type="text"
-                placeholder="Search colleges by name or location..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                style={{
-                  width: "100%",
-                  padding: "12px 16px 12px 40px",
-                  borderRadius: 10,
-                  border: "2px solid #e0e0e0",
-                  fontSize: 15,
-                  outline: "none",
-                  boxSizing: "border-box",
-                  transition: "border-color 0.15s",
-                }}
-                onFocus={(e) => { e.target.style.borderColor = "#3949ab"; }}
-                onBlur={(e) => { e.target.style.borderColor = "#e0e0e0"; }}
-              />
-              <span style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", fontSize: 16 }}>🔍</span>
+          <div style={{ background: "#f8fafc", borderRadius: 12, padding: "16px 18px", marginBottom: 28, border: "1px solid #e5e7eb" }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#374151", marginBottom: 12 }}>📱 SMS Reminders</div>
+            <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", marginBottom: 12 }}>
+              <input type="checkbox" checked={reminderSettings.smsReminders} onChange={e => setReminderSettings(prev => ({ ...prev, smsReminders: e.target.checked }))} style={{ width: 18, height: 18, cursor: "pointer" }} />
+              <span style={{ fontSize: 14, color: "#374151" }}>Enable SMS reminders</span>
+            </label>
+            {reminderSettings.smsReminders && (
+              <input type="tel" value={reminderSettings.phone} onChange={e => setReminderSettings(prev => ({ ...prev, phone: e.target.value }))} placeholder="+1 (555) 000-0000" style={{ width: "100%", padding: "10px 12px", border: "1.5px solid #e5e7eb", borderRadius: 8, fontSize: 14, outline: "none", boxSizing: "border-box" }} />
+            )}
+          </div>
+
+          <div style={{ display: "flex", gap: 10 }}>
+            <button onClick={() => setStep("onboard-schools")} style={{ flex: 1, padding: "12px 0", borderRadius: 10, border: "1.5px solid #e5e7eb", background: "white", color: "#374151", fontWeight: 600, fontSize: 14, cursor: "pointer" }}>
+              ← Back
+            </button>
+            <button onClick={handleSaveSchools} disabled={savingSchools} style={{ flex: 2, padding: "12px 0", background: savingSchools ? "#a5b4fc" : "linear-gradient(135deg, #4f46e5, #7c3aed)", color: "white", border: "none", borderRadius: 10, fontSize: 15, fontWeight: 700, cursor: savingSchools ? "not-allowed" : "pointer" }}>
+              {savingSchools ? "Saving..." : "Save & View Dashboard 🎉"}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Dashboard
+  return (
+    <div style={{ minHeight: "100vh", background: "#f0f2f5" }}>
+      {/* Header */}
+      <div style={{ background: "linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)", color: "white", padding: "0 0 40px" }}>
+        <div style={{ maxWidth: 1100, margin: "0 auto", padding: "20px 20px 0" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ fontSize: 28 }}>🎓</span>
+              <span style={{ fontSize: 22, fontWeight: 800 }}>Edutracker</span>
             </div>
-
-            <div style={{ fontSize: 13, color: "#888", marginBottom: 12 }}>
-              Showing {filteredColleges.length} of {COLLEGES.length} colleges
-            </div>
-
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {filteredColleges.map((college) => {
-                const added = isAdded(college.id);
-                return (
-                  <div
-                    key={college.id}
-                    style={{
-                      background: "white",
-                      borderRadius: 12,
-                      padding: "16px 18px",
-                      boxShadow: "0 1px 4px rgba(0,0,0,0.07)",
-                      border: added ? "2px solid #3949ab" : "2px solid transparent",
-                      transition: "border-color 0.15s",
-                    }}
-                  >
-                    <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
-                      <div style={{ flex: 1 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                          <span style={{ fontWeight: 700, fontSize: 16, color: "#1a237e" }}>{college.name}</span>
-                          <span style={{ fontSize: 12, color: "#888" }}>📍 {college.location}</span>
-                          {added && <span style={{ background: "#e8eaf6", color: "#3949ab", fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 10 }}>Added ✓</span>}
-                        </div>
-                        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                          {college.deadlines.map((dl, i) => {
-                            const col = TYPE_COLORS[dl.type];
-                            const days = daysUntil(dl.date);
-                            return (
-                              <div
-                                key={i}
-                                style={{
-                                  background: col.bg,
-                                  border: `1px solid ${col.border}`,
-                                  borderRadius: 6,
-                                  padding: "3px 8px",
-                                  fontSize: 11,
-                                  display: "flex",
-                                  gap: 5,
-                                  alignItems: "center",
-                                }}
-                              >
-                                <span style={{ fontWeight: 800, color: col.text }}>{dl.type}</span>
-                                <span style={{ color: "#555" }}>{formatDate(dl.date)}</span>
-                                {days >= 0 && days <= 30 && (
-                                  <span style={{ color: days <= 7 ? "#c0392b" : "#d35400", fontWeight: 700 }}>·{days}d</span>
-                                )}
-                                {days < 0 && <span style={{ color: "#bbb" }}>·past</span>}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                      <button
-                        onClick={() => added ? removeSchool(college.id) : addSchool(college.id)}
-                        style={{
-                          background: added ? "white" : "#1a237e",
-                          color: added ? "#c0392b" : "white",
-                          border: added ? "2px solid #e74c3c" : "2px solid #1a237e",
-                          borderRadius: 8,
-                          padding: "8px 16px",
-                          fontWeight: 700,
-                          fontSize: 13,
-                          cursor: "pointer",
-                          whiteSpace: "nowrap",
-                          transition: "all 0.15s",
-                          flexShrink: 0,
-                        }}
-                      >
-                        {added ? "Remove" : "+ Add"}
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <span style={{ fontSize: 13, opacity: 0.85 }}>{userEmail}</span>
+              <button onClick={() => { setSelectedColleges(new Set()); setSelectedDeadlineTypes({}); setStep("onboard-schools"); }} style={{ background: "rgba(255,255,255,0.15)", color: "white", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 8, padding: "7px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+                + Add Schools
+              </button>
+              <button onClick={handleLogout} style={{ background: "rgba(255,255,255,0.1)", color: "white", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 8, padding: "7px 14px", fontSize: 13, cursor: "pointer" }}>
+                Sign Out
+              </button>
             </div>
           </div>
-        )}
 
-        {/* REMINDERS TAB */}
-        {tab === "reminders" && (
-          <div>
-            <div style={{ marginBottom: 20 }}>
-              <h2 style={{ fontSize: 22, fontWeight: 800, color: "#1a237e", marginBottom: 4 }}>🔔 Deadline Reminders</h2>
-              <p style={{ color: "#666", fontSize: 14 }}>
-                Enter your contact info and we'll send you reminders at 30, 14, 7, and 1 day before each deadline.
-              </p>
-            </div>
+          <div style={{ marginTop: 28, marginBottom: 8 }}>
+            <h1 style={{ fontSize: 28, fontWeight: 800, margin: 0 }}>Application Dashboard</h1>
+            <p style={{ opacity: 0.8, marginTop: 6, fontSize: 14 }}>2024–25 College Application Cycle</p>
+          </div>
 
-            {mySchools.length === 0 ? (
-              <div style={{
-                background: "white",
-                borderRadius: 12,
-                padding: 32,
-                textAlign: "center",
-                boxShadow: "0 1px 4px rgba(0,0,0,0.07)",
-              }}>
-                <div style={{ fontSize: 48, marginBottom: 12 }}>🏫</div>
-                <div style={{ fontWeight: 700, fontSize: 17, color: "#333", marginBottom: 8 }}>No schools selected yet</div>
-                <div style={{ color: "#888", fontSize: 14, marginBottom: 20 }}>Add schools to your list first, then set up reminders.</div>
-                <button
-                  onClick={() => setTab("schools")}
-                  style={{ background: "#1a237e", color: "white", border: "none", padding: "10px 22px", borderRadius: 8, fontWeight: 700, cursor: "pointer" }}
-                >
-                  Browse Schools
-                </button>
+          {/* Stats */}
+          <div style={{ display: "flex", gap: 14, marginTop: 20, flexWrap: "wrap" }}>
+            {[
+              { label: "Total Deadlines", value: deadlines.length, icon: "📋" },
+              { label: "Upcoming", value: upcomingCount, icon: "⏰" },
+              { label: "Urgent (≤14 days)", value: urgentCount, icon: "🔥", alert: urgentCount > 0 },
+              { label: "Schools Tracked", value: new Set(userSchools.map(s => s.college_id)).size, icon: "🏫" },
+            ].map(stat => (
+              <div key={stat.label} style={{ background: stat.alert ? "rgba(239,68,68,0.2)" : "rgba(255,255,255,0.12)", borderRadius: 12, padding: "14px 18px", minWidth: 130, border: stat.alert ? "1px solid rgba(239,68,68,0.4)" : "1px solid rgba(255,255,255,0.15)" }}>
+                <div style={{ fontSize: 18, marginBottom: 4 }}>{stat.icon}</div>
+                <div style={{ fontSize: 26, fontWeight: 800 }}>{stat.value}</div>
+                <div style={{ fontSize: 11, opacity: 0.8, fontWeight: 500 }}>{stat.label}</div>
               </div>
-            ) : (
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
-                <div>
-                  {/* Reminder form */}
-                  <div style={{
-                    background: "white",
-                    borderRadius: 12,
-                    padding: "24px",
-                    boxShadow: "0 1px 4px rgba(0,0,0,0.07)",
-                    marginBottom: 16,
-                  }}>
-                    <h3 style={{ margin: "0 0 16px", fontSize: 17, fontWeight: 700, color: "#1a237e" }}>Contact Information</h3>
-                    <form onSubmit={handleReminderSubmit}>
-                      <div style={{ marginBottom: 14 }}>
-                        <label style={{ display: "block", fontWeight: 600, fontSize: 13, color: "#444", marginBottom: 6 }}>
-                          Email Address *
-                        </label>
-                        <input
-                          type="email"
-                          placeholder="you@example.com"
-                          value={reminderEmail}
-                          onChange={(e) => setReminderEmail(e.target.value)}
-                          required
-                          style={{
-                            width: "100%",
-                            padding: "10px 14px",
-                            borderRadius: 8,
-                            border: "2px solid #e0e0e0",
-                            fontSize: 14,
-                            outline: "none",
-                            boxSizing: "border-box",
-                          }}
-                          onFocus={(e) => { e.target.style.borderColor = "#3949ab"; }}
-                          onBlur={(e) => { e.target.style.borderColor = "#e0e0e0"; }}
-                        />
-                      </div>
-                      <div style={{ marginBottom: 20 }}>
-                        <label style={{ display: "block", fontWeight: 600, fontSize: 13, color: "#444", marginBottom: 6 }}>
-                          Phone Number (optional SMS)
-                        </label>
-                        <input
-                          type="tel"
-                          placeholder="+1 (555) 000-0000"
-                          value={reminderPhone}
-                          onChange={(e) => setReminderPhone(e.target.value)}
-                          style={{
-                            width: "100%",
-                            padding: "10px 14px",
-                            borderRadius: 8,
-                            border: "2px solid #e0e0e0",
-                            fontSize: 14,
-                            outline: "none",
-                            boxSizing: "border-box",
-                          }}
-                          onFocus={(e) => { e.target.style.borderColor = "#3949ab"; }}
-                          onBlur={(e) => { e.target.style.borderColor = "#e0e0e0"; }}
-                        />
-                      </div>
-                      <button
-                        type="submit"
-                        disabled={submitting}
-                        style={{
-                          width: "100%",
-                          background: submitting ? "#aaa" : "linear-gradient(135deg, #1a237e, #3949ab)",
-                          color: "white",
-                          border: "none",
-                          padding: "12px",
-                          borderRadius: 8,
-                          fontWeight: 700,
-                          fontSize: 15,
-                          cursor: submitting ? "not-allowed" : "pointer",
-                        }}
-                      >
-                        {submitting ? "Saving…" : "Save Reminder Preferences"}
-                      </button>
-                      {submitMsg && (
-                        <div style={{
-                          marginTop: 14,
-                          padding: "10px 14px",
-                          background: submitMsg.startsWith("✅") ? "#f0fff4" : "#fff0f0",
-                          border: `1px solid ${submitMsg.startsWith("✅") ? "#27ae60" : "#e74c3c"}`,
-                          borderRadius: 8,
-                          fontSize: 13,
-                          color: submitMsg.startsWith("✅") ? "#1e8449" : "#c0392b",
-                          lineHeight: 1.5,
-                        }}>
-                          {submitMsg}
-                        </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Main Content */}
+      <div style={{ maxWidth: 1100, margin: "-20px auto 0", padding: "0 20px 40px" }}>
+        {/* Controls */}
+        <div style={{ background: "white", borderRadius: 14, padding: "16px 20px", boxShadow: "0 4px 12px rgba(0,0,0,0.08)", marginBottom: 20, display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+          <input value={dashboardSearch} onChange={e => setDashboardSearch(e.target.value)} placeholder="🔍 Search deadlines..." style={{ flex: 1, minWidth: 180, padding: "9px 14px", border: "1.5px solid #e5e7eb", borderRadius: 8, fontSize: 14, outline: "none" }} />
+          <div style={{ display: "flex", background: "#f3f4f6", borderRadius: 8, padding: 3, gap: 2 }}>
+            {(["all", "upcoming", "past"] as const).map(f => (
+              <button key={f} onClick={() => setActiveFilter(f)} style={{ padding: "7px 16px", borderRadius: 6, border: "none", cursor: "pointer", fontWeight: 600, fontSize: 13, background: activeFilter === f ? "white" : "transparent", color: activeFilter === f ? "#4f46e5" : "#6b7280", boxShadow: activeFilter === f ? "0 1px 3px rgba(0,0,0,0.1)" : "none" }}>
+                {f.charAt(0).toUpperCase() + f.slice(1)}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {loadingSchools ? (
+          <div style={{ textAlign: "center", padding: 60, color: "#6b7280" }}>
+            <div style={{ fontSize: 32, marginBottom: 12 }}>⏳</div>
+            <div>Loading your deadlines...</div>
+          </div>
+        ) : filteredDeadlines.length === 0 ? (
+          <div style={{ textAlign: "center", padding: "60px 20px", background: "white", borderRadius: 14, boxShadow: "0 4px 12px rgba(0,0,0,0.05)" }}>
+            <div style={{ fontSize: 48, marginBottom: 16 }}>📭</div>
+            <h3 style={{ fontSize: 20, fontWeight: 700, color: "#1e1b4b", margin: "0 0 8px" }}>
+              {userSchools.length === 0 ? "No schools added yet" : "No deadlines match your filter"}
+            </h3>
+            <p style={{ color: "#6b7280", margin: "0 0 20px" }}>
+              {userSchools.length === 0 ? "Add your target schools to start tracking deadlines" : "Try changing the filter or search term"}
+            </p>
+            {userSchools.length === 0 && (
+              <button onClick={() => { setSelectedColleges(new Set()); setSelectedDeadlineTypes({}); setStep("onboard-schools"); }} style={{ background: "linear-gradient(135deg, #4f46e5, #7c3aed)", color: "white", border: "none", borderRadius: 10, padding: "12px 28px", fontSize: 15, fontWeight: 700, cursor: "pointer" }}>
+                Add Schools Now
+              </button>
+            )}
+          </div>
+        ) : (
+          <div style={{ display: "grid", gap: 12 }}>
+            {filteredDeadlines.map((deadline, idx) => {
+              const daysUntil = deadline.daysUntil;
+              const isPast = daysUntil < 0;
+              const color = getDeadlineColor(daysUntil);
+              const countdown = getCountdown(deadline.date);
+              const school = userSchools.find(s => s.college_id === deadline.collegeId && s.deadline_type === deadline.type);
+              const college = COLLEGES.find(c => c.id === deadline.collegeId);
+
+              return (
+                <div key={`${deadline.collegeId}-${deadline.type}-${idx}`} style={{ background: "white", borderRadius: 14, padding: "18px 20px", boxShadow: "0 2px 8px rgba(0,0,0,0.06)", border: `1px solid ${isPast ? "#f3f4f6" : daysUntil <= 7 ? "#fee2e2" : "#f3f4f6"}`, opacity: isPast ? 0.65 : 1, display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+                  {/* Countdown ring */}
+                  <div style={{ width: 64, height: 64, borderRadius: "50%", background: isPast ? "#f3f4f6" : `${color}18`, border: `3px solid ${isPast ? "#d1d5db" : color}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, flexDirection: "column" }}>
+                    <div style={{ fontSize: isPast ? 10 : 12, fontWeight: 800, color: isPast ? "#9ca3af" : color, lineHeight: 1.1, textAlign: "center" }}>
+                      {isPast ? "✓" : (
+                        <>
+                          <div style={{ fontSize: daysUntil === 0 ? 9 : 15, fontWeight: 800 }}>{daysUntil <= 0 ? "!" : daysUntil}</div>
+                          {daysUntil > 0 && <div style={{ fontSize: 9, opacity: 0.8 }}>days</div>}
+                        </>
                       )}
-                    </form>
+                    </div>
                   </div>
 
-                  {/* How it works */}
-                  <div style={{
-                    background: "#e8eaf6",
-                    borderRadius: 12,
-                    padding: "20px 24px",
-                  }}>
-                    <div style={{ fontWeight: 700, fontSize: 14, color: "#1a237e", marginBottom: 12 }}>📬 How Reminders Work</div>
-                    {[
-                      { days: 30, icon: "📅", label: "30 days before — Plan your essays" },
-                      { days: 14, icon: "✍️", label: "14 days before — Final review time" },
-                      { days: 7, icon: "⚡", label: "7 days before — Last chance to polish" },
-                      { days: 1, icon: "🚨", label: "1 day before — Submit tomorrow!" },
-                    ].map((r) => (
-                      <div key={r.days} style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 8 }}>
-                        <span style={{ fontSize: 20 }}>{r.icon}</span>
-                        <span style={{ fontSize: 13, color: "#333" }}>{r.label}</span>
-                      </div>
-                    ))}
+                  {/* Info */}
+                  <div style={{ flex: 1, minWidth: 200 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
+                      <span style={{ fontSize: 16, fontWeight: 700, color: "#1e1b4b" }}>{deadline.collegeName}</span>
+                      <span style={{ ...getDeadlineBadgeStyle(deadline.type), padding: "2px 10px", borderRadius: 20, fontSize: 11, fontWeight: 700 }}>{deadline.type}</span>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                      <span style={{ fontSize: 13, color: "#6b7280" }}>📅 {formatDate(deadline.date)}</span>
+                      {college && <span style={{ fontSize: 12, color: "#9ca3af" }}>{college.location}</span>}
+                    </div>
+                    <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                      {school?.email_reminder && <span style={{ fontSize: 11, background: "#f0fdf4", color: "#16a34a", border: "1px solid #bbf7d0", padding: "2px 8px", borderRadius: 20 }}>📧 Email on</span>}
+                      {school?.sms_reminder && <span style={{ fontSize: 11, background: "#f0f9ff", color: "#0369a1", border: "1px solid #bae6fd", padding: "2px 8px", borderRadius: 20 }}>📱 SMS on</span>}
+                    </div>
                   </div>
-                </div>
 
-                {/* My schools summary */}
-                <div>
-                  <div style={{ fontWeight: 700, fontSize: 15, color: "#1a237e", marginBottom: 12 }}>
-                    Deadlines to be tracked ({myColleges.reduce((acc, c) => acc + c.deadlines.filter(d => daysUntil(d.date) > 0).length, 0)} upcoming)
-                  </div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                    {myColleges.map((college) => (
-                      <div key={college.id} style={{
-                        background: "white",
-                        borderRadius: 10,
-                        padding: "14px 16px",
-                        boxShadow: "0 1px 4px rgba(0,0,0,0.07)",
-                      }}>
-                        <div style={{ fontWeight: 700, fontSize: 14, color: "#1a237e", marginBottom: 8 }}>{college.name}</div>
-                        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                          {college.deadlines.map((dl, i) => {
-                            const days = daysUntil(dl.date);
-                            const col = TYPE_COLORS[dl.type];
-                            return (
-                              <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
-                                <span style={{
-                                  background: col.bg,
-                                  color: col.text,
-                                  border: `1px solid ${col.border}`,
-                                  borderRadius: 4,
-                                  padding: "1px 6px",
-                                  fontWeight: 700,
-                                  fontSize: 10,
-                                }}>
-                                  {dl.type}
-                                </span>
-                                <span style={{ color: "#444" }}>{dl.label}</span>
-                                <span style={{ marginLeft: "auto", color: days < 0 ? "#bbb" : days <= 7 ? "#c0392b" : "#555", fontWeight: days >= 0 && days <= 30 ? 700 : 400 }}>
-                                  {days < 0 ? "Past" : `${formatDate(dl.date)}`}
-                                </span>
-                              </div>
-                            );
-                          })}
+                  {/* Countdown */}
+                  <div style={{ textAlign: "center", minWidth: 90 }}>
+                    <div style={{ fontSize: 18, fontWeight: 800, color: isPast ? "#9ca3af" : color }}>{countdown}</div>
+                    <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 2 }}>{isPast ? "Deadline passed" : "remaining"}</div>
+                    {!isPast && daysUntil <= 30 && (
+                      <div style={{ marginTop: 6, background: `${color}15`, borderRadius: 6, padding: "3px 8px" }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color }}>
+                          {daysUntil <= 1 ? "🚨 DUE SOON" : daysUntil <= 7 ? "⚠️ THIS WEEK" : daysUntil <= 14 ? "📌 2 WEEKS" : "📅 THIS MONTH"}
                         </div>
                       </div>
-                    ))}
+                    )}
                   </div>
+
+                  {/* Delete */}
+                  {school && (
+                    <button onClick={() => handleDeleteSchool(school.id)} style={{ background: "none", border: "none", color: "#d1d5db", cursor: "pointer", fontSize: 16, padding: 4, borderRadius: 6, transition: "color 0.2s" }} onMouseEnter={e => (e.currentTarget.style.color = "#ef4444")} onMouseLeave={e => (e.currentTarget.style.color = "#d1d5db")} title="Remove deadline">
+                      ✕
+                    </button>
+                  )}
                 </div>
-              </div>
-            )}
+              );
+            })}
           </div>
         )}
-      </main>
 
-      {/* Legend */}
-      <div style={{
-        background: "white",
-        borderTop: "1px solid #eee",
-        padding: "12px 24px",
-        display: "flex",
-        gap: 20,
-        justifyContent: "center",
-        flexWrap: "wrap",
-      }}>
-        {Object.entries(TYPE_COLORS).map(([type, col]) => (
-          <div key={type} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#555" }}>
-            <div style={{ width: 10, height: 10, borderRadius: 2, background: col.border }} />
-            <span style={{ fontWeight: 700, color: col.text }}>{type}</span>
-            <span>— {type === "ED" ? "Early Decision" : type === "EA" ? "Early Action" : type === "RD" ? "Regular Decision" : "Financial Aid"}</span>
+        {/* Reminder legend */}
+        {deadlines.length > 0 && (
+          <div style={{ background: "white", borderRadius: 14, padding: "18px 20px", boxShadow: "0 2px 8px rgba(0,0,0,0.06)", marginTop: 20 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#374151", marginBottom: 12 }}>⏰ Automatic Reminder Schedule</div>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              {["30 days before", "14 days before", "7 days before", "1 day before"].map((label, i) => (
+                <div key={label} style={{ background: "#f8fafc", border: "1px solid #e5e7eb", borderRadius: 8, padding: "8px 14px", fontSize: 12, color: "#374151" }}>
+                  <span style={{ fontWeight: 700 }}>{["📅", "📌", "⚠️", "🚨"][i]}</span> {label}
+                </div>
+              ))}
+            </div>
+            <p style={{ fontSize: 12, color: "#9ca3af", marginTop: 10, marginBottom: 0 }}>
+              Reminders are sent via email{userSchools.some(s => s.sms_reminder) ? " and SMS" : ""} to configured addresses for each tracked deadline.
+            </p>
           </div>
-        ))}
+        )}
       </div>
     </div>
   );

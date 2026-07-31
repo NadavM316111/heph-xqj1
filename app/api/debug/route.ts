@@ -7,5 +7,10 @@ export async function GET() {
     if (hasDb()) { await q("SELECT 1"); dbTest = "connect ok"; }
     else dbTest = "DATABASE_URL is not set";
   } catch (e: any) { dbTest = "error: " + (e?.message || String(e)); }
-  return Response.json({ prefix: P, dbTest });
+  return Response.json({
+    prefix: P,
+    dbTest,
+    uploads: !!process.env.BLOB_READ_WRITE_TOKEN,
+    sessions: !!process.env.SESSION_SECRET,
+  });
 }
