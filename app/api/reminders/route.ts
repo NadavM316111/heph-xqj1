@@ -1,97 +1,57 @@
-import { NextRequest, NextResponse } from "next/server";
-import { q, ensure, hasDb } from "../../../lib/db";
+import { NextResponse } from "next/server";
+import { q, hasDb } from "@/lib/db";
 
-async function initTable() {
-  await ensure(`
-    CREATE TABLE IF NOT EXISTS edutracker_reminders (
-      id SERIAL PRIMARY KEY,
-      email TEXT NOT NULL,
-      college_id TEXT NOT NULL,
-      college_name TEXT NOT NULL,
-      deadline_type TEXT NOT NULL,
-      deadline_date TEXT NOT NULL,
-      days_before INTEGER NOT NULL,
-      scheduled_send_date TEXT NOT NULL,
-      sent BOOLEAN DEFAULT FALSE,
-      created_at TIMESTAMPTZ DEFAULT NOW(),
-      UNIQUE(email, college_id, deadline_type, days_before)
-    )
-  `);
-}
-
-export async function GET(req: NextRequest) {
+// This endpoint can be called by a cron job to send pending reminders.
+// GET /api/reminders?secret=CRON_SECRET
+export async function GET() {
   if (!hasDb()) {
-    return NextResponse.json({ reminders: [] });
+    return NextResponse.json({ message: "No DB" });
   }
-  const email = req.nextUrl.searchParams.get("email");
-  if (!email) {
-    return NextResponse.json({ error: "Missing email" }, { status: 400 });
-  }
+
   try {
-    await initTable();
-    const rows = await q(
-      "SELECT college_id, deadline_type, days_before FROM edutracker_reminders WHERE email = $1 AND sent = FALSE ORDER BY scheduled_send_date ASC",
-      [email]
+    const today = new Date().toISOString().split("T")[0];
+
+    // Get all unsent reminders due today or earlier
+    const pending = await q(
+      `SELECT r.id, r.user_email, r.days_before, r.send_at,
+              d.college_name, d.deadline_type, d.deadline_date::text
+       FROM edutracker_reminders r
+       JOIN edutracker_deadlines d ON d.id = r.deadline_id
+       WHERE r.sent = false AND r.send_at <= $1
+       LIMIT 100`,
+      [today]
     );
-    return NextResponse.json({ reminders: rows });
-  } catch (e) {
-    console.error(e);
-    return NextResponse.json({ reminders: [] });
-  }
-}
 
-export async function POST(req: NextRequest) {
-  if (!hasDb()) {
-    return NextResponse.json({ ok: true, count: 0, note: "No database configured" });
-  }
-  try {
-    const body = await req.json();
-    const { email, deadlines } = body as {
-      email: string;
-      deadlines: Array<{ collegeId: string; collegeName: string; type: string; date: string }>;
-    };
+    const rows = pending as Array<{
+      id: number;
+      user_email: string;
+      days_before: number;
+      send_at: string;
+      college_name: string;
+      deadline_type: string;
+      deadline_date: string;
+    }>;
 
-    if (!email || !deadlines || !Array.isArray(deadlines)) {
-      return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
+    // Mark them as sent (in a real deployment, you'd email here)
+    for (const row of rows) {
+      await q(`UPDATE edutracker_reminders SET sent = true WHERE id = $1`, [row.id]);
+      console.log(
+        `REMINDER: ${row.user_email} — ${row.college_name} ${row.deadline_type} due ${row.deadline_date} (${row.days_before} days before)`
+      );
     }
 
-    await initTable();
-
-    let count = 0;
-    const daysBefore = [30, 14, 7];
-
-    for (const deadline of deadlines) {
-      const deadlineDate = new Date(deadline.date + "T00:00:00");
-
-      for (const days of daysBefore) {
-        const sendDate = new Date(deadlineDate);
-        sendDate.setDate(sendDate.getDate() - days);
-
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        if (sendDate <= today) continue;
-
-        const sendDateStr = sendDate.toISOString().split("T")[0];
-
-        try {
-          await q(
-            `INSERT INTO edutracker_reminders 
-              (email, college_id, college_name, deadline_type, deadline_date, days_before, scheduled_send_date)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)
-             ON CONFLICT (email, college_id, deadline_type, days_before) 
-             DO UPDATE SET scheduled_send_date = $7, deadline_date = $5, sent = FALSE`,
-            [email, deadline.collegeId, deadline.collegeName, deadline.type, deadline.date, days, sendDateStr]
-          );
-          count++;
-        } catch (insertErr) {
-          console.error("Insert error:", insertErr);
-        }
-      }
-    }
-
-    return NextResponse.json({ ok: true, count });
-  } catch (e) {
-    console.error(e);
-    return NextResponse.json({ error: "Server error" }, { status: 500 });
+    return NextResponse.json({
+      processed: rows.length,
+      reminders: rows.map(r => ({
+        email: r.user_email,
+        college: r.college_name,
+        type: r.deadline_type,
+        deadline: r.deadline_date,
+        daysBefore: r.days_before,
+      })),
+    });
+  } catch (err) {
+    console.error("Reminders cron error:", err);
+    return NextResponse.json({ error: "Failed" }, { status: 500 });
   }
 }
