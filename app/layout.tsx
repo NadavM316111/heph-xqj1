@@ -2,14 +2,22 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Edutracker — Never Miss a College Deadline",
+  title: "Edutracker — College Application Deadline Tracker",
   description:
-    "Track EA, ED, RD, and scholarship deadlines for 80+ colleges. Get reminders at 30, 14, 7, and 1 day before each deadline.",
+    "Track every college application deadline with personalized reminders. Never miss an EA, ED, RD, or financial aid deadline again.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
+      <head>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link
+          href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+          rel="stylesheet"
+        />
+      </head>
       <body>{children}</body>
     </html>
   );
