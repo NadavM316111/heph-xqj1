@@ -2,113 +2,64 @@ import { NextRequest, NextResponse } from "next/server";
 import { q, ensure } from "@/lib/db";
 import { getSessionEmail } from "@/lib/session";
 
-async function ensureTable() {
+async function init() {
   await ensure();
   await q(`
-    CREATE TABLE IF NOT EXISTS et_user_deadlines (
+    CREATE TABLE IF NOT EXISTS edutracker_deadlines (
       id SERIAL PRIMARY KEY,
       user_email TEXT NOT NULL,
-      college_id INTEGER NOT NULL,
-      college_name TEXT NOT NULL,
-      deadline_type TEXT NOT NULL,
+      school_name TEXT NOT NULL,
       deadline_date DATE NOT NULL,
-      reminder_30 BOOLEAN DEFAULT TRUE,
-      reminder_14 BOOLEAN DEFAULT TRUE,
-      reminder_7 BOOLEAN DEFAULT TRUE,
-      reminder_1 BOOLEAN DEFAULT TRUE,
-      notes TEXT DEFAULT '',
-      created_at TIMESTAMPTZ DEFAULT NOW()
+      app_type TEXT NOT NULL DEFAULT 'Regular Decision',
+      status TEXT NOT NULL DEFAULT 'Not Started',
+      notes TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `, []);
 }
 
 export async function GET(req: NextRequest) {
-  try {
-    const email = await getSessionEmail(req);
-    if (!email) return NextResponse.json({ deadlines: [] });
-    await ensureTable();
-    const result = await q(
-      `SELECT d.*, c.name as college_name
-       FROM et_user_deadlines d
-       LEFT JOIN et_colleges c ON d.college_id = c.id
-       WHERE d.user_email = $1
-       ORDER BY d.deadline_date ASC`,
-      [email]
-    );
-    return NextResponse.json({ deadlines: result.rows });
-  } catch (e) {
-    console.error(e);
-    return NextResponse.json({ deadlines: [] });
-  }
+  const email = await getSessionEmail(req);
+  if (!email) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+  await init();
+  const rows = await q("SELECT * FROM edutracker_deadlines WHERE user_email = $1 ORDER BY deadline_date ASC", [email]);
+  return NextResponse.json({ deadlines: rows.rows });
 }
 
 export async function POST(req: NextRequest) {
-  try {
-    const email = await getSessionEmail(req);
-    if (!email) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
-    await ensureTable();
-    const body = await req.json();
-    const entries: Array<{ college_id: number; deadline_type: string; deadline_date: string }> = body.entries || [];
+  const email = await getSessionEmail(req);
+  if (!email) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+  await init();
+  const body = await req.json();
+  const { school_name, deadline_date, app_type, status, notes } = body;
+  if (!school_name || !deadline_date) return NextResponse.json({ error: "Missing fields" }, { status: 400 });
+  const row = await q(
+    "INSERT INTO edutracker_deadlines (user_email, school_name, deadline_date, app_type, status, notes) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *",
+    [email, school_name, deadline_date, app_type || "Regular Decision", status || "Not Started", notes || ""]
+  );
+  return NextResponse.json({ deadline: row.rows[0] });
+}
 
-    const inserted = [];
-    for (const entry of entries) {
-      // Get college name
-      const college = await q(`SELECT name FROM et_colleges WHERE id = $1`, [entry.college_id]);
-      const collegeName = college.rows.length > 0 ? (college.rows[0] as { name: string }).name : "Unknown";
-
-      // Upsert - avoid duplicates
-      const existing = await q(
-        `SELECT id FROM et_user_deadlines WHERE user_email = $1 AND college_id = $2 AND deadline_type = $3`,
-        [email, entry.college_id, entry.deadline_type]
-      );
-
-      if (existing.rows.length === 0) {
-        const r = await q(
-          `INSERT INTO et_user_deadlines (user_email, college_id, college_name, deadline_type, deadline_date, reminder_30, reminder_14, reminder_7, reminder_1, notes)
-           VALUES ($1, $2, $3, $4, $5, TRUE, TRUE, TRUE, TRUE, '')
-           RETURNING *`,
-          [email, entry.college_id, collegeName, entry.deadline_type, entry.deadline_date]
-        );
-        inserted.push(r.rows[0]);
-      }
-    }
-    return NextResponse.json({ inserted });
-  } catch (e) {
-    console.error(e);
-    return NextResponse.json({ error: "Failed to save" }, { status: 500 });
-  }
+export async function PUT(req: NextRequest) {
+  const email = await getSessionEmail(req);
+  if (!email) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+  await init();
+  const body = await req.json();
+  const { id, school_name, deadline_date, app_type, status, notes } = body;
+  if (!id || !school_name || !deadline_date) return NextResponse.json({ error: "Missing fields" }, { status: 400 });
+  const row = await q(
+    "UPDATE edutracker_deadlines SET school_name=$1, deadline_date=$2, app_type=$3, status=$4, notes=$5 WHERE id=$6 AND user_email=$7 RETURNING *",
+    [school_name, deadline_date, app_type, status, notes || "", id, email]
+  );
+  return NextResponse.json({ deadline: row.rows[0] });
 }
 
 export async function DELETE(req: NextRequest) {
-  try {
-    const email = await getSessionEmail(req);
-    if (!email) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
-    await ensureTable();
-    const body = await req.json();
-    await q(
-      `DELETE FROM et_user_deadlines WHERE id = $1 AND user_email = $2`,
-      [body.id, email]
-    );
-    return NextResponse.json({ ok: true });
-  } catch (e) {
-    console.error(e);
-    return NextResponse.json({ error: "Failed to delete" }, { status: 500 });
-  }
-}
-
-export async function PATCH(req: NextRequest) {
-  try {
-    const email = await getSessionEmail(req);
-    if (!email) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
-    await ensureTable();
-    const body = await req.json();
-    await q(
-      `UPDATE et_user_deadlines SET notes = $1 WHERE id = $2 AND user_email = $3`,
-      [body.notes, body.id, email]
-    );
-    return NextResponse.json({ ok: true });
-  } catch (e) {
-    console.error(e);
-    return NextResponse.json({ error: "Failed to update" }, { status: 500 });
-  }
+  const email = await getSessionEmail(req);
+  if (!email) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+  await init();
+  const body = await req.json();
+  const { id } = body;
+  await q("DELETE FROM edutracker_deadlines WHERE id=$1 AND user_email=$2", [id, email]);
+  return NextResponse.json({ ok: true });
 }
