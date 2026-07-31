@@ -2,19 +2,20 @@
 
 import { useEffect, useState, useCallback } from "react";
 
-interface DeadlineEntry {
+interface Deadline {
   id: number;
   school_name: string;
-  application_type: string;
   deadline_date: string;
+  application_type: string;
   notes: string;
-  email_reminder_sent: boolean;
-  days_until: number;
+  reminder_sent: boolean;
 }
 
 interface User {
   email: string;
 }
+
+type ModalMode = "add" | "edit" | null;
 
 const APPLICATION_TYPES = [
   "Early Decision (ED)",
@@ -28,6 +29,8 @@ const APPLICATION_TYPES = [
 
 const POPULAR_SCHOOLS = [
   "Harvard University",
+  "Stanford University",
+  "MIT",
   "Yale University",
   "Princeton University",
   "Columbia University",
@@ -36,13 +39,11 @@ const POPULAR_SCHOOLS = [
   "Dartmouth College",
   "Cornell University",
   "Duke University",
-  "Stanford University",
-  "MIT",
-  "Caltech",
   "Northwestern University",
   "Johns Hopkins University",
   "Vanderbilt University",
   "Rice University",
+  "Washington University in St. Louis",
   "Notre Dame",
   "Georgetown University",
   "Emory University",
@@ -51,115 +52,93 @@ const POPULAR_SCHOOLS = [
   "UCLA",
   "University of Michigan",
   "University of Virginia",
-  "UNC Chapel Hill",
-  "Georgia Tech",
-  "University of Florida",
-  "University of Texas at Austin",
-  "Penn State",
-  "Ohio State University",
-  "Purdue University",
-  "University of Wisconsin-Madison",
-  "University of Illinois Urbana-Champaign",
-  "University of Washington",
+  "University of North Carolina",
+  "NYU",
   "Boston University",
-  "Northeastern University",
   "Tufts University",
+  "Northeastern University",
+  "University of Southern California",
   "Wake Forest University",
   "Tulane University",
-  "University of Southern California",
-  "New York University",
-  "Fordham University",
+  "Case Western Reserve University",
+  "University of Rochester",
+  "Rensselaer Polytechnic Institute",
   "Boston College",
   "College of William & Mary",
-  "University of Rochester",
-  "Case Western Reserve University",
-  "Lehigh University",
-  "Rensselaer Polytechnic Institute",
-  "Worcester Polytechnic Institute",
-  "Stevens Institute of Technology",
+  "University of Wisconsin-Madison",
+  "Penn State University",
+  "Ohio State University",
+  "University of Florida",
+  "University of Georgia",
+  "University of Texas at Austin",
+  "Texas A&M University",
+  "Purdue University",
+  "University of Illinois Urbana-Champaign",
+  "University of Washington",
+  "University of Maryland",
+  "Michigan State University",
+  "Indiana University",
 ];
 
-function daysUntilLabel(days: number): { text: string; color: string } {
-  if (days < 0) return { text: "Past due", color: "#dc2626" };
-  if (days === 0) return { text: "Due today!", color: "#dc2626" };
-  if (days <= 7) return { text: `${days}d left`, color: "#ea580c" };
-  if (days <= 30) return { text: `${days}d left`, color: "#d97706" };
-  return { text: `${days}d left`, color: "#16a34a" };
+function daysUntil(dateStr: string): number {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const target = new Date(dateStr + "T00:00:00");
+  const diff = target.getTime() - today.getTime();
+  return Math.ceil(diff / (1000 * 60 * 60 * 24));
+}
+
+function formatDate(dateStr: string): string {
+  const d = new Date(dateStr + "T00:00:00");
+  return d.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+}
+
+function urgencyColor(days: number): string {
+  if (days < 0) return "#9ca3af";
+  if (days <= 7) return "#ef4444";
+  if (days <= 14) return "#f97316";
+  if (days <= 30) return "#eab308";
+  return "#22c55e";
+}
+
+function urgencyBg(days: number): string {
+  if (days < 0) return "#f3f4f6";
+  if (days <= 7) return "#fef2f2";
+  if (days <= 14) return "#fff7ed";
+  if (days <= 30) return "#fefce8";
+  return "#f0fdf4";
 }
 
 export default function Home() {
   const [user, setUser] = useState<User | null>(null);
+  const [deadlines, setDeadlines] = useState<Deadline[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [modalMode, setModalMode] = useState<ModalMode>(null);
+  const [editingDeadline, setEditingDeadline] = useState<Deadline | null>(null);
+  const [form, setForm] = useState({
+    school_name: "",
+    deadline_date: "",
+    application_type: "Regular Decision (RD)",
+    notes: "",
+  });
+  const [schoolInput, setSchoolInput] = useState("");
+  const [showSuggestions, setShowSuggestions] = useState(false);
   const [authMode, setAuthMode] = useState<"login" | "signup">("signup");
-  const [authEmail, setAuthEmail] = useState("");
-  const [authPassword, setAuthPassword] = useState("");
+  const [authForm, setAuthForm] = useState({ email: "", password: "" });
   const [authError, setAuthError] = useState("");
-  const [authLoading, setAuthLoading] = useState(false);
-
-  const [deadlines, setDeadlines] = useState<DeadlineEntry[]>([]);
-  const [loadingDeadlines, setLoadingDeadlines] = useState(false);
-
-  const [showForm, setShowForm] = useState(false);
-  const [formSchool, setFormSchool] = useState("");
-  const [formType, setFormType] = useState(APPLICATION_TYPES[0]);
-  const [formDate, setFormDate] = useState("");
-  const [formNotes, setFormNotes] = useState("");
-  const [formError, setFormError] = useState("");
-  const [formLoading, setFormLoading] = useState(false);
-  const [schoolSuggestions, setSchoolSuggestions] = useState<string[]>([]);
-
-  const [editId, setEditId] = useState<number | null>(null);
-  const [deleteId, setDeleteId] = useState<number | null>(null);
-
-  const [reminderEmail, setReminderEmail] = useState("");
-  const [reminderSaving, setReminderSaving] = useState(false);
-  const [reminderSaved, setReminderSaved] = useState(false);
-  const [reminderEmailValue, setReminderEmailValue] = useState("");
-
-  const [filterStatus, setFilterStatus] = useState<"all" | "upcoming" | "past">("upcoming");
-  const [initialized, setInitialized] = useState(false);
-
-  // Track page visit
-  useEffect(() => {
-    fetch("/api/track", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: window.location.pathname }),
-    }).catch(() => {});
-  }, []);
-
-  // Check session on load
-  useEffect(() => {
-    fetch("/api/auth")
-      .then((r) => r.json())
-      .then((d) => {
-        if (d.email) {
-          setUser({ email: d.email });
-        }
-        setInitialized(true);
-      })
-      .catch(() => setInitialized(true));
-  }, []);
+  const [showAuth, setShowAuth] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null);
+  const [filterType, setFilterType] = useState("all");
+  const [sortBy, setSortBy] = useState<"date" | "school">("date");
+  const [successMsg, setSuccessMsg] = useState("");
 
   const fetchDeadlines = useCallback(async () => {
-    setLoadingDeadlines(true);
     try {
       const res = await fetch("/api/deadlines");
-      const data = await res.json();
-      if (data.deadlines) setDeadlines(data.deadlines);
-    } catch {
-      // ignore
-    } finally {
-      setLoadingDeadlines(false);
-    }
-  }, []);
-
-  const fetchReminderEmail = useCallback(async () => {
-    try {
-      const res = await fetch("/api/reminder-email");
-      const data = await res.json();
-      if (data.email) {
-        setReminderEmailValue(data.email);
-        setReminderEmail(data.email);
+      if (res.ok) {
+        const data = await res.json();
+        setDeadlines(data.deadlines || []);
       }
     } catch {
       // ignore
@@ -167,376 +146,343 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (user) {
+    fetch("/api/track", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: window.location.pathname }) });
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch("/api/auth");
+        const data = await res.json();
+        if (data.email) setUser({ email: data.email });
+      } catch {}
+      setLoading(false);
       fetchDeadlines();
-      fetchReminderEmail();
-    }
-  }, [user, fetchDeadlines, fetchReminderEmail]);
+    })();
+  }, [fetchDeadlines]);
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError("");
-    setAuthLoading(true);
+    setSaving(true);
     try {
       const res = await fetch("/api/auth", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: authMode, email: authEmail, password: authPassword }),
+        body: JSON.stringify({ mode: authMode, email: authForm.email, password: authForm.password }),
       });
       const data = await res.json();
-      if (data.error) {
-        setAuthError(data.error);
-      } else if (data.ok) {
+      if (data.ok) {
         setUser({ email: data.email });
+        setShowAuth(false);
+        setAuthForm({ email: "", password: "" });
+        fetchDeadlines();
+        setSuccessMsg(authMode === "signup" ? "Account created! Welcome to Edutracker." : "Welcome back!");
+        setTimeout(() => setSuccessMsg(""), 3000);
+      } else {
+        setAuthError(data.error || "Something went wrong");
       }
     } catch {
-      setAuthError("Something went wrong. Try again.");
-    } finally {
-      setAuthLoading(false);
+      setAuthError("Network error. Please try again.");
     }
+    setSaving(false);
   };
 
   const handleLogout = async () => {
-    await fetch("/api/auth", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mode: "logout" }),
-    });
+    await fetch("/api/auth", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode: "logout" }) });
     setUser(null);
     setDeadlines([]);
-    setReminderEmailValue("");
-    setReminderEmail("");
+    fetchDeadlines();
   };
 
-  const handleSchoolInput = (val: string) => {
-    setFormSchool(val);
-    if (val.length < 2) {
-      setSchoolSuggestions([]);
-      return;
-    }
-    const lower = val.toLowerCase();
-    const matches = POPULAR_SCHOOLS.filter((s) => s.toLowerCase().includes(lower)).slice(0, 6);
-    setSchoolSuggestions(matches);
+  const openAdd = () => {
+    setForm({ school_name: "", deadline_date: "", application_type: "Regular Decision (RD)", notes: "" });
+    setSchoolInput("");
+    setEditingDeadline(null);
+    setModalMode("add");
   };
 
-  const openAddForm = () => {
-    setEditId(null);
-    setFormSchool("");
-    setFormType(APPLICATION_TYPES[0]);
-    setFormDate("");
-    setFormNotes("");
-    setFormError("");
-    setSchoolSuggestions([]);
-    setShowForm(true);
+  const openEdit = (d: Deadline) => {
+    setForm({ school_name: d.school_name, deadline_date: d.deadline_date, application_type: d.application_type, notes: d.notes || "" });
+    setSchoolInput(d.school_name);
+    setEditingDeadline(d);
+    setModalMode("edit");
   };
 
-  const openEditForm = (d: DeadlineEntry) => {
-    setEditId(d.id);
-    setFormSchool(d.school_name);
-    setFormType(d.application_type);
-    setFormDate(d.deadline_date.slice(0, 10));
-    setFormNotes(d.notes || "");
-    setFormError("");
-    setSchoolSuggestions([]);
-    setShowForm(true);
-  };
-
-  const handleFormSubmit = async (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formSchool.trim()) { setFormError("School name is required."); return; }
-    if (!formDate) { setFormError("Deadline date is required."); return; }
-    setFormError("");
-    setFormLoading(true);
+    if (!form.school_name.trim() || !form.deadline_date) return;
+    setSaving(true);
     try {
-      const body = {
-        id: editId,
-        school_name: formSchool.trim(),
-        application_type: formType,
-        deadline_date: formDate,
-        notes: formNotes.trim(),
-      };
+      const method = modalMode === "edit" && editingDeadline ? "PUT" : "POST";
+      const body = modalMode === "edit" && editingDeadline
+        ? { ...form, id: editingDeadline.id }
+        : form;
       const res = await fetch("/api/deadlines", {
-        method: editId ? "PUT" : "POST",
+        method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      const data = await res.json();
-      if (data.error) { setFormError(data.error); return; }
-      setShowForm(false);
-      fetchDeadlines();
-    } catch {
-      setFormError("Failed to save. Try again.");
-    } finally {
-      setFormLoading(false);
-    }
+      if (res.ok) {
+        await fetchDeadlines();
+        setModalMode(null);
+        setSuccessMsg(modalMode === "edit" ? "Deadline updated!" : "Deadline added!");
+        setTimeout(() => setSuccessMsg(""), 3000);
+      }
+    } catch {}
+    setSaving(false);
   };
 
   const handleDelete = async (id: number) => {
     try {
-      await fetch("/api/deadlines", {
+      const res = await fetch("/api/deadlines", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id }),
       });
-      setDeleteId(null);
-      fetchDeadlines();
-    } catch {
-      // ignore
-    }
-  };
-
-  const handleSaveReminderEmail = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setReminderSaving(true);
-    setReminderSaved(false);
-    try {
-      const res = await fetch("/api/reminder-email", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: reminderEmail }),
-      });
-      const data = await res.json();
-      if (data.ok) {
-        setReminderEmailValue(reminderEmail);
-        setReminderSaved(true);
-        setTimeout(() => setReminderSaved(false), 3000);
+      if (res.ok) {
+        await fetchDeadlines();
+        setDeleteConfirm(null);
+        setSuccessMsg("Deadline removed.");
+        setTimeout(() => setSuccessMsg(""), 3000);
       }
-    } catch {
-      // ignore
-    } finally {
-      setReminderSaving(false);
-    }
+    } catch {}
   };
 
-  const filteredDeadlines = deadlines.filter((d) => {
-    if (filterStatus === "upcoming") return d.days_until >= 0;
-    if (filterStatus === "past") return d.days_until < 0;
-    return true;
-  });
+  const filteredDeadlines = deadlines
+    .filter(d => filterType === "all" || d.application_type === filterType)
+    .sort((a, b) => {
+      if (sortBy === "date") return new Date(a.deadline_date).getTime() - new Date(b.deadline_date).getTime();
+      return a.school_name.localeCompare(b.school_name);
+    });
 
-  const sortedDeadlines = [...filteredDeadlines].sort((a, b) => {
-    return new Date(a.deadline_date).getTime() - new Date(b.deadline_date).getTime();
-  });
+  const upcoming7 = deadlines.filter(d => { const days = daysUntil(d.deadline_date); return days >= 0 && days <= 7; });
+  const upcoming30 = deadlines.filter(d => { const days = daysUntil(d.deadline_date); return days >= 0 && days <= 30; });
+  const past = deadlines.filter(d => daysUntil(d.deadline_date) < 0);
 
-  const upcomingCount = deadlines.filter((d) => d.days_until >= 0 && d.days_until <= 7).length;
+  const filteredSuggestions = POPULAR_SCHOOLS.filter(s =>
+    s.toLowerCase().includes(schoolInput.toLowerCase()) && schoolInput.length > 0
+  ).slice(0, 6);
 
-  if (!initialized) {
+  if (loading) {
     return (
-      <div style={styles.loadingScreen}>
-        <img src="https://kobwhnsy46wia1ga.public.blob.vercel-storage.com/olympus/MHzFM0XwMRAKcI38/ms9ar2f7-ee744c62-792d-4a40-9a12-3f39cebb7464-removebg-preview-3C58eOMxvVC76P595ELS8vavDN1zzQ.png" alt="Edutracker" style={{ width: 80, height: 80, objectFit: "contain" }} />
-        <p style={{ color: "#1e40af", marginTop: 16, fontWeight: 600 }}>Loading…</p>
-      </div>
-    );
-  }
-
-  if (!user) {
-    return (
-      <div style={styles.authPage}>
-        <div style={styles.authCard}>
-          <div style={styles.logoArea}>
-            <img
-              src="https://kobwhnsy46wia1ga.public.blob.vercel-storage.com/olympus/MHzFM0XwMRAKcI38/ms9ar2f7-ee744c62-792d-4a40-9a12-3f39cebb7464-removebg-preview-3C58eOMxvVC76P595ELS8vavDN1zzQ.png"
-              alt="Edutracker logo"
-              style={{ width: 70, height: 70, objectFit: "contain" }}
-            />
-            <h1 style={styles.brandTitle}>Edutracker</h1>
-            <p style={styles.brandSub}>Never miss a college application deadline.</p>
-          </div>
-
-          <div style={styles.tabRow}>
-            <button
-              style={{ ...styles.tab, ...(authMode === "signup" ? styles.tabActive : {}) }}
-              onClick={() => { setAuthMode("signup"); setAuthError(""); }}
-            >
-              Sign Up
-            </button>
-            <button
-              style={{ ...styles.tab, ...(authMode === "login" ? styles.tabActive : {}) }}
-              onClick={() => { setAuthMode("login"); setAuthError(""); }}
-            >
-              Log In
-            </button>
-          </div>
-
-          <form onSubmit={handleAuth} style={styles.form}>
-            <label style={styles.label}>Email</label>
-            <input
-              style={styles.input}
-              type="email"
-              placeholder="you@example.com"
-              value={authEmail}
-              onChange={(e) => setAuthEmail(e.target.value)}
-              required
-            />
-            <label style={styles.label}>Password</label>
-            <input
-              style={styles.input}
-              type="password"
-              placeholder="••••••••"
-              value={authPassword}
-              onChange={(e) => setAuthPassword(e.target.value)}
-              required
-            />
-            {authError && <p style={styles.errorMsg}>{authError}</p>}
-            <button style={styles.primaryBtn} type="submit" disabled={authLoading}>
-              {authLoading ? "Please wait…" : authMode === "signup" ? "Create Account" : "Log In"}
-            </button>
-          </form>
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#f0f4ff" }}>
+        <div style={{ textAlign: "center" }}>
+          <img src="https://kobwhnsy46wia1ga.public.blob.vercel-storage.com/olympus/MHzFM0XwMRAKcI38/ms9ar2f7-ee744c62-792d-4a40-9a12-3f39cebb7464-removebg-preview-3C58eOMxvVC76P595ELS8vavDN1zzQ.png" alt="Edutracker" style={{ height: 64, marginBottom: 16 }} />
+          <p style={{ color: "#1e40af", fontSize: 16 }}>Loading your deadlines...</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div style={styles.appShell}>
+    <div style={{ minHeight: "100vh", background: "#f0f4ff", fontFamily: "'Segoe UI', system-ui, sans-serif" }}>
       {/* Header */}
-      <header style={styles.header}>
-        <div style={styles.headerLeft}>
-          <img
-            src="https://kobwhnsy46wia1ga.public.blob.vercel-storage.com/olympus/MHzFM0XwMRAKcI38/ms9ar2f7-ee744c62-792d-4a40-9a12-3f39cebb7464-removebg-preview-3C58eOMxvVC76P595ELS8vavDN1zzQ.png"
-            alt="Edutracker"
-            style={{ width: 38, height: 38, objectFit: "contain" }}
-          />
-          <span style={styles.headerBrand}>Edutracker</span>
+      <header style={{ background: "#1e40af", color: "white", padding: "0 24px", display: "flex", alignItems: "center", justifyContent: "space-between", height: 64, boxShadow: "0 2px 8px rgba(0,0,0,0.15)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <img src="https://kobwhnsy46wia1ga.public.blob.vercel-storage.com/olympus/MHzFM0XwMRAKcI38/ms9ar2f7-ee744c62-792d-4a40-9a12-3f39cebb7464-removebg-preview-3C58eOMxvVC76P595ELS8vavDN1zzQ.png" alt="Edutracker" style={{ height: 40, filter: "brightness(0) invert(1)" }} />
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 20, lineHeight: 1 }}>Edutracker</div>
+            <div style={{ fontSize: 11, opacity: 0.8, lineHeight: 1.2 }}>College Application Deadlines</div>
+          </div>
         </div>
-        <div style={styles.headerRight}>
-          {upcomingCount > 0 && (
-            <span style={styles.urgentBadge}>🔔 {upcomingCount} due soon</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          {user ? (
+            <>
+              <span style={{ fontSize: 13, opacity: 0.9 }}>{user.email}</span>
+              <button onClick={handleLogout} style={{ background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.3)", color: "white", padding: "6px 14px", borderRadius: 6, cursor: "pointer", fontSize: 13 }}>
+                Sign Out
+              </button>
+            </>
+          ) : (
+            <button onClick={() => setShowAuth(true)} style={{ background: "white", border: "none", color: "#1e40af", padding: "8px 18px", borderRadius: 6, cursor: "pointer", fontWeight: 600, fontSize: 14 }}>
+              Sign In / Sign Up
+            </button>
           )}
-          <span style={styles.userEmail}>{user.email}</span>
-          <button style={styles.logoutBtn} onClick={handleLogout}>Log out</button>
         </div>
       </header>
 
-      <main style={styles.main}>
-        {/* Reminder email section */}
-        <section style={styles.reminderSection}>
-          <h2 style={styles.sectionTitle}>📧 7-Day Email Reminders</h2>
-          <p style={styles.sectionDesc}>
-            We&apos;ll email you 7 days before each deadline. Make sure your reminder email is set:
-          </p>
-          <form onSubmit={handleSaveReminderEmail} style={styles.reminderForm}>
-            <input
-              style={{ ...styles.input, flex: 1, marginBottom: 0 }}
-              type="email"
-              placeholder="reminder@youremail.com"
-              value={reminderEmail}
-              onChange={(e) => setReminderEmail(e.target.value)}
-              required
-            />
-            <button style={styles.primaryBtn} type="submit" disabled={reminderSaving}>
-              {reminderSaving ? "Saving…" : reminderEmailValue ? "Update" : "Save"}
+      {/* Success toast */}
+      {successMsg && (
+        <div style={{ position: "fixed", top: 80, right: 24, background: "#16a34a", color: "white", padding: "12px 20px", borderRadius: 8, zIndex: 9999, boxShadow: "0 4px 12px rgba(0,0,0,0.15)", fontWeight: 500 }}>
+          ✓ {successMsg}
+        </div>
+      )}
+
+      <main style={{ maxWidth: 900, margin: "0 auto", padding: "24px 16px" }}>
+        {/* Stats bar */}
+        {deadlines.length > 0 && (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginBottom: 24 }}>
+            <StatCard label="Total Deadlines" value={deadlines.length} color="#1e40af" />
+            <StatCard label="Due in 7 Days" value={upcoming7.length} color="#ef4444" />
+            <StatCard label="Due in 30 Days" value={upcoming30.length} color="#f97316" />
+            <StatCard label="Completed" value={past.length} color="#9ca3af" />
+          </div>
+        )}
+
+        {/* Alert for urgent deadlines */}
+        {upcoming7.length > 0 && (
+          <div style={{ background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 10, padding: "14px 18px", marginBottom: 20, display: "flex", alignItems: "center", gap: 12 }}>
+            <span style={{ fontSize: 24 }}>🚨</span>
+            <div>
+              <div style={{ fontWeight: 600, color: "#dc2626", fontSize: 15 }}>
+                {upcoming7.length} deadline{upcoming7.length !== 1 ? "s" : ""} due within 7 days!
+              </div>
+              <div style={{ color: "#7f1d1d", fontSize: 13 }}>
+                {upcoming7.map(d => d.school_name).join(", ")}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Controls */}
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 20 }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <select
+              value={filterType}
+              onChange={e => setFilterType(e.target.value)}
+              style={{ padding: "8px 12px", border: "1px solid #dbeafe", borderRadius: 6, fontSize: 13, background: "white", color: "#1e3a8a" }}
+            >
+              <option value="all">All Types</option>
+              {APPLICATION_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+            <select
+              value={sortBy}
+              onChange={e => setSortBy(e.target.value as "date" | "school")}
+              style={{ padding: "8px 12px", border: "1px solid #dbeafe", borderRadius: 6, fontSize: 13, background: "white", color: "#1e3a8a" }}
+            >
+              <option value="date">Sort by Date</option>
+              <option value="school">Sort by School</option>
+            </select>
+          </div>
+          <button
+            onClick={openAdd}
+            style={{ background: "#1e40af", color: "white", border: "none", padding: "10px 22px", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 15, display: "flex", alignItems: "center", gap: 8 }}
+          >
+            + Add Deadline
+          </button>
+        </div>
+
+        {/* Deadline List */}
+        {filteredDeadlines.length === 0 ? (
+          <div style={{ textAlign: "center", padding: "60px 20px", background: "white", borderRadius: 16, boxShadow: "0 1px 4px rgba(0,0,0,0.06)" }}>
+            <div style={{ fontSize: 64, marginBottom: 16 }}>🎓</div>
+            <h2 style={{ color: "#1e40af", marginBottom: 8 }}>No deadlines yet</h2>
+            <p style={{ color: "#6b7280", marginBottom: 24, maxWidth: 340, margin: "0 auto 24px" }}>
+              Add your college application deadlines to stay on top of your applications. We'll remind you 7 days before each one!
+            </p>
+            <button
+              onClick={openAdd}
+              style={{ background: "#1e40af", color: "white", border: "none", padding: "12px 28px", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 16 }}
+            >
+              + Add Your First Deadline
             </button>
-          </form>
-          {reminderSaved && <p style={styles.successMsg}>✅ Reminder email saved!</p>}
-          {reminderEmailValue && !reminderSaved && (
-            <p style={styles.currentReminder}>Current: <strong>{reminderEmailValue}</strong></p>
-          )}
-        </section>
-
-        {/* Deadlines section */}
-        <section style={styles.deadlineSection}>
-          <div style={styles.deadlineHeader}>
-            <h2 style={styles.sectionTitle}>📅 My Application Deadlines</h2>
-            <button style={styles.addBtn} onClick={openAddForm}>+ Add School</button>
           </div>
-
-          {/* Filter tabs */}
-          <div style={styles.filterRow}>
-            {(["upcoming", "all", "past"] as const).map((f) => (
-              <button
-                key={f}
-                style={{ ...styles.filterBtn, ...(filterStatus === f ? styles.filterBtnActive : {}) }}
-                onClick={() => setFilterStatus(f)}
-              >
-                {f === "upcoming" ? "Upcoming" : f === "all" ? "All" : "Past"}
-              </button>
-            ))}
-          </div>
-
-          {loadingDeadlines ? (
-            <p style={{ color: "#64748b", textAlign: "center", padding: "40px 0" }}>Loading deadlines…</p>
-          ) : sortedDeadlines.length === 0 ? (
-            <div style={styles.emptyState}>
-              <div style={{ fontSize: 48, marginBottom: 12 }}>🎓</div>
-              <p style={{ color: "#475569", fontWeight: 600, fontSize: 18 }}>No deadlines yet</p>
-              <p style={{ color: "#94a3b8", marginTop: 6 }}>
-                {filterStatus === "past"
-                  ? "No past deadlines found."
-                  : "Add your first school to get started!"}
-              </p>
-              {filterStatus !== "past" && (
-                <button style={{ ...styles.primaryBtn, marginTop: 20 }} onClick={openAddForm}>
-                  + Add Your First School
-                </button>
-              )}
-            </div>
-          ) : (
-            <div style={styles.cardGrid}>
-              {sortedDeadlines.map((d) => {
-                const { text, color } = daysUntilLabel(d.days_until);
-                const isPast = d.days_until < 0;
-                return (
-                  <div key={d.id} style={{ ...styles.deadlineCard, opacity: isPast ? 0.7 : 1 }}>
-                    <div style={styles.cardTop}>
-                      <div>
-                        <div style={styles.schoolName}>{d.school_name}</div>
-                        <div style={styles.appType}>{d.application_type}</div>
-                      </div>
-                      <div style={{ ...styles.daysChip, color, borderColor: color }}>
-                        {text}
-                      </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {filteredDeadlines.map(d => {
+              const days = daysUntil(d.deadline_date);
+              const color = urgencyColor(days);
+              const bg = urgencyBg(days);
+              return (
+                <div
+                  key={d.id}
+                  style={{ background: "white", borderRadius: 12, padding: "16px 20px", boxShadow: "0 1px 4px rgba(0,0,0,0.07)", display: "flex", alignItems: "center", gap: 16, borderLeft: `4px solid ${color}` }}
+                >
+                  <div style={{ flexShrink: 0, textAlign: "center", background: bg, borderRadius: 10, padding: "10px 14px", minWidth: 70 }}>
+                    <div style={{ fontSize: 22, fontWeight: 700, color, lineHeight: 1 }}>
+                      {days < 0 ? "✓" : days === 0 ? "TODAY" : days}
                     </div>
-                    <div style={styles.deadlineDateRow}>
-                      <span style={styles.deadlineDateLabel}>Deadline:</span>
-                      <span style={styles.deadlineDateVal}>
-                        {new Date(d.deadline_date + "T12:00:00").toLocaleDateString("en-US", {
-                          weekday: "short",
-                          month: "long",
-                          day: "numeric",
-                          year: "numeric",
-                        })}
-                      </span>
-                    </div>
-                    {d.notes && <div style={styles.notes}>{d.notes}</div>}
-                    {d.email_reminder_sent && (
-                      <div style={styles.reminderSentTag}>✅ Reminder sent</div>
-                    )}
-                    <div style={styles.cardActions}>
-                      <button style={styles.editBtn} onClick={() => openEditForm(d)}>Edit</button>
-                      <button style={styles.deleteBtn} onClick={() => setDeleteId(d.id)}>Delete</button>
-                    </div>
+                    {days >= 0 && days !== 0 && <div style={{ fontSize: 10, color, fontWeight: 600, marginTop: 2 }}>DAYS LEFT</div>}
+                    {days < 0 && <div style={{ fontSize: 10, color: "#9ca3af", fontWeight: 600, marginTop: 2 }}>PAST</div>}
                   </div>
-                );
-              })}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 700, fontSize: 17, color: "#1e3a8a", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {d.school_name}
+                    </div>
+                    <div style={{ fontSize: 13, color: "#3b82f6", fontWeight: 500, marginTop: 2 }}>{d.application_type}</div>
+                    <div style={{ fontSize: 12, color: "#6b7280", marginTop: 3 }}>{formatDate(d.deadline_date)}</div>
+                    {d.notes && <div style={{ fontSize: 12, color: "#9ca3af", marginTop: 4, fontStyle: "italic" }}>{d.notes}</div>}
+                  </div>
+                  <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+                    <button
+                      onClick={() => openEdit(d)}
+                      style={{ background: "#eff6ff", border: "1px solid #bfdbfe", color: "#1e40af", padding: "7px 14px", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 }}
+                    >
+                      Edit
+                    </button>
+                    {deleteConfirm === d.id ? (
+                      <div style={{ display: "flex", gap: 4 }}>
+                        <button onClick={() => handleDelete(d.id)} style={{ background: "#ef4444", border: "none", color: "white", padding: "7px 12px", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 }}>Delete</button>
+                        <button onClick={() => setDeleteConfirm(null)} style={{ background: "#f3f4f6", border: "1px solid #e5e7eb", color: "#374151", padding: "7px 10px", borderRadius: 6, cursor: "pointer", fontSize: 13 }}>Cancel</button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => setDeleteConfirm(d.id)}
+                        style={{ background: "#fff5f5", border: "1px solid #fca5a5", color: "#dc2626", padding: "7px 14px", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 }}
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Reminder info */}
+        {deadlines.length > 0 && (
+          <div style={{ marginTop: 24, background: "#eff6ff", borderRadius: 10, padding: "14px 18px", display: "flex", alignItems: "center", gap: 12, border: "1px solid #bfdbfe" }}>
+            <span style={{ fontSize: 20 }}>📧</span>
+            <div style={{ fontSize: 13, color: "#1e40af" }}>
+              <strong>Email reminders are active.</strong> You'll receive a reminder 7 days before each deadline.
+              {!user && <span style={{ color: "#2563eb" }}> <button onClick={() => setShowAuth(true)} style={{ background: "none", border: "none", color: "#1d4ed8", cursor: "pointer", textDecoration: "underline", fontSize: 13, padding: 0 }}>Sign in</button> to save your deadlines across devices.</span>}
             </div>
-          )}
-        </section>
+          </div>
+        )}
       </main>
 
       {/* Add/Edit Modal */}
-      {showForm && (
-        <div style={styles.modalOverlay} onClick={() => setShowForm(false)}>
-          <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
-            <h2 style={styles.modalTitle}>{editId ? "Edit Deadline" : "Add School Deadline"}</h2>
-            <form onSubmit={handleFormSubmit} style={styles.form}>
-              <label style={styles.label}>School Name</label>
-              <div style={{ position: "relative" }}>
+      {modalMode && (
+        <div
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 16 }}
+          onClick={e => { if (e.target === e.currentTarget) setModalMode(null); }}
+        >
+          <div style={{ background: "white", borderRadius: 16, padding: 28, width: "100%", maxWidth: 500, boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }}>
+            <h2 style={{ margin: "0 0 20px", color: "#1e3a8a", fontSize: 20 }}>
+              {modalMode === "edit" ? "Edit Deadline" : "Add College Deadline"}
+            </h2>
+            <form onSubmit={handleSave}>
+              <div style={{ marginBottom: 16, position: "relative" }}>
+                <label style={{ display: "block", fontWeight: 600, marginBottom: 6, color: "#374151", fontSize: 14 }}>School Name *</label>
                 <input
-                  style={styles.input}
                   type="text"
+                  value={schoolInput}
+                  onChange={e => {
+                    setSchoolInput(e.target.value);
+                    setForm(f => ({ ...f, school_name: e.target.value }));
+                    setShowSuggestions(true);
+                  }}
+                  onFocus={() => setShowSuggestions(true)}
+                  onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
                   placeholder="e.g. Harvard University"
-                  value={formSchool}
-                  onChange={(e) => handleSchoolInput(e.target.value)}
-                  autoComplete="off"
+                  required
+                  style={{ width: "100%", padding: "10px 12px", border: "1px solid #d1d5db", borderRadius: 8, fontSize: 15, boxSizing: "border-box" }}
                 />
-                {schoolSuggestions.length > 0 && (
-                  <div style={styles.suggestions}>
-                    {schoolSuggestions.map((s) => (
+                {showSuggestions && filteredSuggestions.length > 0 && (
+                  <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: "white", border: "1px solid #d1d5db", borderRadius: 8, boxShadow: "0 4px 12px rgba(0,0,0,0.1)", zIndex: 10, marginTop: 2 }}>
+                    {filteredSuggestions.map(s => (
                       <div
                         key={s}
-                        style={styles.suggestion}
-                        onMouseDown={() => { setFormSchool(s); setSchoolSuggestions([]); }}
+                        onMouseDown={() => {
+                          setSchoolInput(s);
+                          setForm(f => ({ ...f, school_name: s }));
+                          setShowSuggestions(false);
+                        }}
+                        style={{ padding: "10px 14px", cursor: "pointer", fontSize: 14, color: "#1e3a8a" }}
+                        onMouseEnter={e => (e.currentTarget.style.background = "#eff6ff")}
+                        onMouseLeave={e => (e.currentTarget.style.background = "white")}
                       >
                         {s}
                       </div>
@@ -545,42 +491,53 @@ export default function Home() {
                 )}
               </div>
 
-              <label style={styles.label}>Application Type</label>
-              <select
-                style={styles.input}
-                value={formType}
-                onChange={(e) => setFormType(e.target.value)}
-              >
-                {APPLICATION_TYPES.map((t) => (
-                  <option key={t} value={t}>{t}</option>
-                ))}
-              </select>
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ display: "block", fontWeight: 600, marginBottom: 6, color: "#374151", fontSize: 14 }}>Deadline Date *</label>
+                <input
+                  type="date"
+                  value={form.deadline_date}
+                  onChange={e => setForm(f => ({ ...f, deadline_date: e.target.value }))}
+                  required
+                  style={{ width: "100%", padding: "10px 12px", border: "1px solid #d1d5db", borderRadius: 8, fontSize: 15, boxSizing: "border-box" }}
+                />
+              </div>
 
-              <label style={styles.label}>Deadline Date</label>
-              <input
-                style={styles.input}
-                type="date"
-                value={formDate}
-                onChange={(e) => setFormDate(e.target.value)}
-                required
-              />
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ display: "block", fontWeight: 600, marginBottom: 6, color: "#374151", fontSize: 14 }}>Application Type *</label>
+                <select
+                  value={form.application_type}
+                  onChange={e => setForm(f => ({ ...f, application_type: e.target.value }))}
+                  style={{ width: "100%", padding: "10px 12px", border: "1px solid #d1d5db", borderRadius: 8, fontSize: 15, boxSizing: "border-box", background: "white" }}
+                >
+                  {APPLICATION_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </div>
 
-              <label style={styles.label}>Notes (optional)</label>
-              <textarea
-                style={{ ...styles.input, height: 80, resize: "vertical" }}
-                placeholder="Any extra info…"
-                value={formNotes}
-                onChange={(e) => setFormNotes(e.target.value)}
-              />
+              <div style={{ marginBottom: 20 }}>
+                <label style={{ display: "block", fontWeight: 600, marginBottom: 6, color: "#374151", fontSize: 14 }}>Notes (optional)</label>
+                <textarea
+                  value={form.notes}
+                  onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
+                  placeholder="e.g. Need to submit SAT scores, 3 recommendation letters..."
+                  rows={3}
+                  style={{ width: "100%", padding: "10px 12px", border: "1px solid #d1d5db", borderRadius: 8, fontSize: 14, boxSizing: "border-box", resize: "vertical" }}
+                />
+              </div>
 
-              {formError && <p style={styles.errorMsg}>{formError}</p>}
-
-              <div style={styles.modalActions}>
-                <button type="button" style={styles.cancelBtn} onClick={() => setShowForm(false)}>
+              <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+                <button
+                  type="button"
+                  onClick={() => setModalMode(null)}
+                  style={{ padding: "10px 20px", border: "1px solid #d1d5db", borderRadius: 8, background: "white", cursor: "pointer", fontSize: 14, color: "#374151" }}
+                >
                   Cancel
                 </button>
-                <button type="submit" style={styles.primaryBtn} disabled={formLoading}>
-                  {formLoading ? "Saving…" : editId ? "Save Changes" : "Add Deadline"}
+                <button
+                  type="submit"
+                  disabled={saving}
+                  style={{ padding: "10px 24px", border: "none", borderRadius: 8, background: "#1e40af", color: "white", cursor: "pointer", fontSize: 14, fontWeight: 600, opacity: saving ? 0.7 : 1 }}
+                >
+                  {saving ? "Saving..." : modalMode === "edit" ? "Save Changes" : "Add Deadline"}
                 </button>
               </div>
             </form>
@@ -588,20 +545,71 @@ export default function Home() {
         </div>
       )}
 
-      {/* Delete confirm */}
-      {deleteId !== null && (
-        <div style={styles.modalOverlay} onClick={() => setDeleteId(null)}>
-          <div style={{ ...styles.modal, maxWidth: 380 }} onClick={(e) => e.stopPropagation()}>
-            <h2 style={styles.modalTitle}>Delete Deadline?</h2>
-            <p style={{ color: "#475569", marginBottom: 24 }}>
-              This will permanently remove this deadline. Are you sure?
-            </p>
-            <div style={styles.modalActions}>
-              <button style={styles.cancelBtn} onClick={() => setDeleteId(null)}>Cancel</button>
-              <button style={{ ...styles.primaryBtn, background: "#dc2626" }} onClick={() => handleDelete(deleteId!)}>
-                Yes, Delete
-              </button>
+      {/* Auth Modal */}
+      {showAuth && (
+        <div
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 16 }}
+          onClick={e => { if (e.target === e.currentTarget) setShowAuth(false); }}
+        >
+          <div style={{ background: "white", borderRadius: 16, padding: 28, width: "100%", maxWidth: 420, boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }}>
+            <div style={{ textAlign: "center", marginBottom: 24 }}>
+              <img src="https://kobwhnsy46wia1ga.public.blob.vercel-storage.com/olympus/MHzFM0XwMRAKcI38/ms9ar2f7-ee744c62-792d-4a40-9a12-3f39cebb7464-removebg-preview-3C58eOMxvVC76P595ELS8vavDN1zzQ.png" alt="Edutracker" style={{ height: 48, marginBottom: 12 }} />
+              <h2 style={{ margin: 0, color: "#1e3a8a", fontSize: 22 }}>
+                {authMode === "signup" ? "Create Account" : "Welcome Back"}
+              </h2>
+              <p style={{ color: "#6b7280", fontSize: 14, margin: "6px 0 0" }}>
+                {authMode === "signup" ? "Save your deadlines across all your devices" : "Sign in to access your deadlines"}
+              </p>
             </div>
+
+            <div style={{ display: "flex", background: "#f3f4f6", borderRadius: 8, padding: 4, marginBottom: 20 }}>
+              {(["signup", "login"] as const).map(mode => (
+                <button
+                  key={mode}
+                  onClick={() => { setAuthMode(mode); setAuthError(""); }}
+                  style={{ flex: 1, padding: "8px 0", border: "none", borderRadius: 6, cursor: "pointer", fontWeight: 600, fontSize: 14, background: authMode === mode ? "white" : "transparent", color: authMode === mode ? "#1e40af" : "#6b7280", boxShadow: authMode === mode ? "0 1px 3px rgba(0,0,0,0.1)" : "none" }}
+                >
+                  {mode === "signup" ? "Sign Up" : "Log In"}
+                </button>
+              ))}
+            </div>
+
+            <form onSubmit={handleAuth}>
+              <div style={{ marginBottom: 14 }}>
+                <label style={{ display: "block", fontWeight: 600, marginBottom: 6, color: "#374151", fontSize: 14 }}>Email</label>
+                <input
+                  type="email"
+                  value={authForm.email}
+                  onChange={e => setAuthForm(f => ({ ...f, email: e.target.value }))}
+                  placeholder="you@example.com"
+                  required
+                  style={{ width: "100%", padding: "10px 12px", border: "1px solid #d1d5db", borderRadius: 8, fontSize: 15, boxSizing: "border-box" }}
+                />
+              </div>
+              <div style={{ marginBottom: 18 }}>
+                <label style={{ display: "block", fontWeight: 600, marginBottom: 6, color: "#374151", fontSize: 14 }}>Password</label>
+                <input
+                  type="password"
+                  value={authForm.password}
+                  onChange={e => setAuthForm(f => ({ ...f, password: e.target.value }))}
+                  placeholder="••••••••"
+                  required
+                  style={{ width: "100%", padding: "10px 12px", border: "1px solid #d1d5db", borderRadius: 8, fontSize: 15, boxSizing: "border-box" }}
+                />
+              </div>
+              {authError && (
+                <div style={{ background: "#fef2f2", border: "1px solid #fca5a5", color: "#dc2626", padding: "10px 14px", borderRadius: 8, marginBottom: 16, fontSize: 14 }}>
+                  {authError}
+                </div>
+              )}
+              <button
+                type="submit"
+                disabled={saving}
+                style={{ width: "100%", padding: "12px", border: "none", borderRadius: 8, background: "#1e40af", color: "white", cursor: "pointer", fontSize: 16, fontWeight: 600, opacity: saving ? 0.7 : 1 }}
+              >
+                {saving ? "Please wait..." : authMode === "signup" ? "Create Account" : "Sign In"}
+              </button>
+            </form>
           </div>
         </div>
       )}
@@ -609,407 +617,11 @@ export default function Home() {
   );
 }
 
-const styles: Record<string, React.CSSProperties> = {
-  loadingScreen: {
-    minHeight: "100vh",
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    justifyContent: "center",
-    background: "#f0f7ff",
-  },
-  authPage: {
-    minHeight: "100vh",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    background: "linear-gradient(135deg, #1e40af 0%, #3b82f6 60%, #93c5fd 100%)",
-    padding: "20px",
-  },
-  authCard: {
-    background: "#fff",
-    borderRadius: 20,
-    padding: "40px 36px",
-    width: "100%",
-    maxWidth: 420,
-    boxShadow: "0 20px 60px rgba(30,64,175,0.25)",
-  },
-  logoArea: {
-    textAlign: "center",
-    marginBottom: 28,
-  },
-  brandTitle: {
-    fontSize: 28,
-    fontWeight: 800,
-    color: "#1e40af",
-    margin: "10px 0 4px",
-  },
-  brandSub: {
-    fontSize: 15,
-    color: "#64748b",
-    margin: 0,
-  },
-  tabRow: {
-    display: "flex",
-    borderRadius: 10,
-    overflow: "hidden",
-    border: "1.5px solid #dbeafe",
-    marginBottom: 24,
-  },
-  tab: {
-    flex: 1,
-    padding: "11px 0",
-    border: "none",
-    background: "#f8fafc",
-    color: "#64748b",
-    fontWeight: 600,
-    fontSize: 15,
-    cursor: "pointer",
-  },
-  tabActive: {
-    background: "#1e40af",
-    color: "#fff",
-  },
-  form: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 4,
-  },
-  label: {
-    fontSize: 13,
-    fontWeight: 600,
-    color: "#374151",
-    marginBottom: 2,
-    marginTop: 8,
-  },
-  input: {
-    width: "100%",
-    padding: "11px 14px",
-    borderRadius: 8,
-    border: "1.5px solid #dbeafe",
-    fontSize: 15,
-    color: "#1e293b",
-    background: "#f8faff",
-    boxSizing: "border-box",
-    outline: "none",
-    marginBottom: 4,
-  },
-  primaryBtn: {
-    marginTop: 8,
-    padding: "13px 0",
-    background: "#1e40af",
-    color: "#fff",
-    border: "none",
-    borderRadius: 8,
-    fontSize: 16,
-    fontWeight: 700,
-    cursor: "pointer",
-    width: "100%",
-  },
-  errorMsg: {
-    color: "#dc2626",
-    fontSize: 13,
-    margin: "4px 0 0",
-  },
-  successMsg: {
-    color: "#16a34a",
-    fontSize: 13,
-    marginTop: 8,
-  },
-  appShell: {
-    minHeight: "100vh",
-    background: "#f0f7ff",
-    fontFamily: "'Inter', 'Segoe UI', system-ui, sans-serif",
-  },
-  header: {
-    background: "#1e40af",
-    padding: "0 24px",
-    height: 60,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    boxShadow: "0 2px 12px rgba(30,64,175,0.3)",
-    position: "sticky",
-    top: 0,
-    zIndex: 100,
-  },
-  headerLeft: {
-    display: "flex",
-    alignItems: "center",
-    gap: 10,
-  },
-  headerBrand: {
-    color: "#fff",
-    fontWeight: 800,
-    fontSize: 20,
-    letterSpacing: "-0.3px",
-  },
-  headerRight: {
-    display: "flex",
-    alignItems: "center",
-    gap: 12,
-  },
-  urgentBadge: {
-    background: "#fbbf24",
-    color: "#78350f",
-    padding: "3px 10px",
-    borderRadius: 20,
-    fontSize: 12,
-    fontWeight: 700,
-  },
-  userEmail: {
-    color: "#bfdbfe",
-    fontSize: 13,
-    maxWidth: 180,
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-  },
-  logoutBtn: {
-    background: "rgba(255,255,255,0.12)",
-    border: "1px solid rgba(255,255,255,0.3)",
-    color: "#fff",
-    borderRadius: 6,
-    padding: "5px 12px",
-    fontSize: 13,
-    cursor: "pointer",
-    fontWeight: 600,
-  },
-  main: {
-    maxWidth: 900,
-    margin: "0 auto",
-    padding: "28px 16px 60px",
-  },
-  reminderSection: {
-    background: "#fff",
-    borderRadius: 16,
-    padding: "24px",
-    marginBottom: 24,
-    boxShadow: "0 2px 12px rgba(30,64,175,0.08)",
-    border: "1.5px solid #dbeafe",
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: 700,
-    color: "#1e40af",
-    margin: "0 0 6px",
-  },
-  sectionDesc: {
-    color: "#64748b",
-    fontSize: 14,
-    margin: "0 0 14px",
-  },
-  reminderForm: {
-    display: "flex",
-    gap: 10,
-    alignItems: "flex-end",
-  },
-  currentReminder: {
-    color: "#64748b",
-    fontSize: 13,
-    marginTop: 8,
-  },
-  deadlineSection: {
-    background: "#fff",
-    borderRadius: 16,
-    padding: "24px",
-    boxShadow: "0 2px 12px rgba(30,64,175,0.08)",
-    border: "1.5px solid #dbeafe",
-  },
-  deadlineHeader: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 16,
-  },
-  addBtn: {
-    background: "#1e40af",
-    color: "#fff",
-    border: "none",
-    borderRadius: 8,
-    padding: "9px 18px",
-    fontSize: 14,
-    fontWeight: 700,
-    cursor: "pointer",
-  },
-  filterRow: {
-    display: "flex",
-    gap: 8,
-    marginBottom: 20,
-  },
-  filterBtn: {
-    padding: "6px 16px",
-    borderRadius: 20,
-    border: "1.5px solid #dbeafe",
-    background: "#f8faff",
-    color: "#64748b",
-    fontSize: 13,
-    fontWeight: 600,
-    cursor: "pointer",
-  },
-  filterBtnActive: {
-    background: "#1e40af",
-    color: "#fff",
-    borderColor: "#1e40af",
-  },
-  emptyState: {
-    textAlign: "center",
-    padding: "60px 20px",
-  },
-  cardGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
-    gap: 16,
-  },
-  deadlineCard: {
-    border: "1.5px solid #dbeafe",
-    borderRadius: 14,
-    padding: "18px",
-    background: "#f8faff",
-    transition: "box-shadow 0.15s",
-  },
-  cardTop: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    marginBottom: 10,
-  },
-  schoolName: {
-    fontSize: 16,
-    fontWeight: 700,
-    color: "#1e293b",
-    lineHeight: 1.3,
-  },
-  appType: {
-    fontSize: 12,
-    color: "#3b82f6",
-    fontWeight: 600,
-    marginTop: 3,
-  },
-  daysChip: {
-    fontSize: 13,
-    fontWeight: 700,
-    border: "1.5px solid",
-    borderRadius: 20,
-    padding: "3px 10px",
-    whiteSpace: "nowrap",
-    marginLeft: 8,
-  },
-  deadlineDateRow: {
-    display: "flex",
-    gap: 6,
-    alignItems: "center",
-    marginBottom: 8,
-  },
-  deadlineDateLabel: {
-    fontSize: 12,
-    color: "#94a3b8",
-    fontWeight: 600,
-  },
-  deadlineDateVal: {
-    fontSize: 13,
-    color: "#334155",
-    fontWeight: 600,
-  },
-  notes: {
-    fontSize: 13,
-    color: "#64748b",
-    marginBottom: 8,
-    fontStyle: "italic",
-  },
-  reminderSentTag: {
-    fontSize: 12,
-    color: "#16a34a",
-    fontWeight: 600,
-    marginBottom: 6,
-  },
-  cardActions: {
-    display: "flex",
-    gap: 8,
-    marginTop: 12,
-  },
-  editBtn: {
-    flex: 1,
-    padding: "7px 0",
-    background: "#eff6ff",
-    color: "#1e40af",
-    border: "1.5px solid #bfdbfe",
-    borderRadius: 7,
-    fontSize: 13,
-    fontWeight: 700,
-    cursor: "pointer",
-  },
-  deleteBtn: {
-    flex: 1,
-    padding: "7px 0",
-    background: "#fff5f5",
-    color: "#dc2626",
-    border: "1.5px solid #fecaca",
-    borderRadius: 7,
-    fontSize: 13,
-    fontWeight: 700,
-    cursor: "pointer",
-  },
-  modalOverlay: {
-    position: "fixed",
-    inset: 0,
-    background: "rgba(15,23,42,0.5)",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    zIndex: 200,
-    padding: 16,
-  },
-  modal: {
-    background: "#fff",
-    borderRadius: 18,
-    padding: "32px 28px",
-    width: "100%",
-    maxWidth: 480,
-    boxShadow: "0 20px 60px rgba(0,0,0,0.25)",
-    maxHeight: "90vh",
-    overflowY: "auto",
-  },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: 800,
-    color: "#1e40af",
-    margin: "0 0 20px",
-  },
-  modalActions: {
-    display: "flex",
-    gap: 10,
-    marginTop: 12,
-  },
-  cancelBtn: {
-    flex: 1,
-    padding: "13px 0",
-    background: "#f1f5f9",
-    color: "#475569",
-    border: "none",
-    borderRadius: 8,
-    fontSize: 15,
-    fontWeight: 700,
-    cursor: "pointer",
-  },
-  suggestions: {
-    position: "absolute",
-    top: "100%",
-    left: 0,
-    right: 0,
-    background: "#fff",
-    border: "1.5px solid #dbeafe",
-    borderRadius: 8,
-    zIndex: 300,
-    boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
-    maxHeight: 220,
-    overflowY: "auto",
-  },
-  suggestion: {
-    padding: "10px 14px",
-    fontSize: 14,
-    color: "#1e293b",
-    cursor: "pointer",
-    borderBottom: "1px solid #f1f5f9",
-  },
-};
+function StatCard({ label, value, color }: { label: string; value: number; color: string }) {
+  return (
+    <div style={{ background: "white", borderRadius: 10, padding: "16px 20px", boxShadow: "0 1px 4px rgba(0,0,0,0.06)", borderTop: `3px solid ${color}` }}>
+      <div style={{ fontSize: 28, fontWeight: 700, color, lineHeight: 1 }}>{value}</div>
+      <div style={{ fontSize: 13, color: "#6b7280", marginTop: 4 }}>{label}</div>
+    </div>
+  );
+}
