@@ -1,119 +1,115 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useEffect, useState, useCallback } from "react";
+import { COLLEGES, College } from "@/lib/colleges";
 
-interface Deadline {
-  type: "EA" | "ED" | "ED2" | "RD" | "Scholarship";
-  date: string;
-  label?: string;
-}
-
-interface College {
-  id: string;
-  name: string;
-  location: string;
-  deadlines: Deadline[];
-  tags: string[];
-}
+type Step = "auth" | "onboarding-schools" | "onboarding-reminders" | "dashboard";
+type DeadlineType = "EA" | "ED" | "RD" | "Scholarship";
 
 interface User {
   email: string;
 }
 
-type View = "dashboard" | "calendar" | "admin" | "auth";
-
-const STORAGE_KEY = "edutracker_selected_schools";
-const ADMIN_KEY = "edutracker_admin_colleges";
-const SESSION_KEY = "edutracker_session";
-
-import { DEFAULT_COLLEGES } from "../lib/colleges";
-
-function getColleges(): College[] {
-  if (typeof window === "undefined") return DEFAULT_COLLEGES;
-  try {
-    const stored = localStorage.getItem(ADMIN_KEY);
-    if (stored) return JSON.parse(stored);
-  } catch {}
-  return DEFAULT_COLLEGES;
+interface SelectedDeadline {
+  collegeId: string;
+  collegeName: string;
+  type: DeadlineType;
+  date: string;
 }
 
-function saveColleges(colleges: College[]) {
-  localStorage.setItem(ADMIN_KEY, JSON.stringify(colleges));
+interface ReminderPrefs {
+  email: boolean;
+  sms: boolean;
+  smsNumber: string;
+  intervals: number[]; // days before: 30, 14, 7, 1
 }
 
-function getSelectedIds(): string[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) return JSON.parse(stored);
-  } catch {}
-  return [];
+interface AppState {
+  user: User | null;
+  selectedColleges: string[];
+  selectedDeadlines: SelectedDeadline[];
+  reminderPrefs: ReminderPrefs;
+  step: Step;
 }
 
-function saveSelectedIds(ids: string[]) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(ids));
-}
+const DEFAULT_PREFS: ReminderPrefs = {
+  email: true,
+  sms: false,
+  smsNumber: "",
+  intervals: [30, 14, 7, 1],
+};
 
 function daysUntil(dateStr: string): number {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  const target = new Date(dateStr + "T00:00:00");
-  const diff = target.getTime() - today.getTime();
-  return Math.ceil(diff / (1000 * 60 * 60 * 24));
+  const target = new Date(dateStr);
+  target.setHours(0, 0, 0, 0);
+  return Math.round((target.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
 }
 
 function formatDate(dateStr: string): string {
-  const d = new Date(dateStr + "T00:00:00");
+  const d = new Date(dateStr);
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
-function deadlineColor(type: Deadline["type"]): string {
-  switch (type) {
-    case "EA": return "#3b82f6";
-    case "ED": return "#8b5cf6";
-    case "ED2": return "#a855f7";
-    case "RD": return "#10b981";
-    case "Scholarship": return "#f59e0b";
-    default: return "#6b7280";
-  }
+function urgencyColor(days: number): string {
+  if (days < 0) return "#94a3b8";
+  if (days <= 7) return "#ef4444";
+  if (days <= 14) return "#f97316";
+  if (days <= 30) return "#eab308";
+  return "#22c55e";
 }
 
-function urgencyStyle(days: number): React.CSSProperties {
-  if (days < 0) return { background: "#f3f4f6", color: "#9ca3af", textDecoration: "line-through" };
-  if (days <= 7) return { background: "#fee2e2", color: "#dc2626", fontWeight: 700 };
-  if (days <= 30) return { background: "#fef3c7", color: "#d97706", fontWeight: 600 };
-  return { background: "#ecfdf5", color: "#065f46" };
+function urgencyLabel(days: number): string {
+  if (days < 0) return "Past";
+  if (days === 0) return "Today!";
+  if (days === 1) return "Tomorrow!";
+  return `${days}d`;
 }
 
 export default function Home() {
-  const [view, setView] = useState<View>("auth");
-  const [user, setUser] = useState<User | null>(null);
-  const [colleges, setColleges] = useState<College[]>([]);
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [filterTag, setFilterTag] = useState("All");
-  const [listView, setListView] = useState<"list" | "calendar">("list");
+  const [state, setState] = useState<AppState>({
+    user: null,
+    selectedColleges: [],
+    selectedDeadlines: [],
+    reminderPrefs: DEFAULT_PREFS,
+    step: "auth",
+  });
+
   const [authMode, setAuthMode] = useState<"login" | "signup">("login");
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
   const [authError, setAuthError] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
-  const [editingCollege, setEditingCollege] = useState<College | null>(null);
-  const [adminView, setAdminView] = useState<"list" | "edit">("list");
-  const [toast, setToast] = useState("");
-  const [calendarMonth, setCalendarMonth] = useState(() => new Date());
 
+  const [schoolSearch, setSchoolSearch] = useState("");
+  const [deadlineFilter, setDeadlineFilter] = useState<DeadlineType | "ALL">("ALL");
+  const [onboardingTab, setOnboardingTab] = useState<"search" | "selected">("search");
+
+  const [dashFilter, setDashFilter] = useState<DeadlineType | "ALL">("ALL");
+  const [dashSort, setDashSort] = useState<"date" | "name">("date");
+  const [showPast, setShowPast] = useState(false);
+
+  const [saveStatus, setSaveStatus] = useState("");
+  const [reminderSaved, setReminderSaved] = useState(false);
+
+  // Load from localStorage on mount
   useEffect(() => {
-    const session = localStorage.getItem(SESSION_KEY);
-    if (session) {
+    const saved = localStorage.getItem("edutracker_state");
+    if (saved) {
       try {
-        const u = JSON.parse(session);
-        setUser(u);
-        setView("dashboard");
+        const parsed = JSON.parse(saved) as Partial<AppState>;
+        setState((prev) => ({
+          ...prev,
+          ...parsed,
+          reminderPrefs: { ...DEFAULT_PREFS, ...(parsed.reminderPrefs || {}) },
+        }));
       } catch {}
     }
-    setColleges(getColleges());
-    setSelectedIds(getSelectedIds());
+  }, []);
+
+  // Track page
+  useEffect(() => {
     fetch("/api/track", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -121,14 +117,19 @@ export default function Home() {
     }).catch(() => {});
   }, []);
 
-  const showToast = (msg: string) => {
-    setToast(msg);
-    setTimeout(() => setToast(""), 2800);
-  };
+  const persist = useCallback((newState: Partial<AppState>) => {
+    setState((prev) => {
+      const merged = { ...prev, ...newState };
+      localStorage.setItem("edutracker_state", JSON.stringify(merged));
+      return merged;
+    });
+  }, []);
 
-  const handleAuth = async () => {
-    setAuthError("");
+  // Auth
+  async function handleAuth(e: React.FormEvent) {
+    e.preventDefault();
     setAuthLoading(true);
+    setAuthError("");
     try {
       const res = await fetch("/api/auth", {
         method: "POST",
@@ -137,11 +138,9 @@ export default function Home() {
       });
       const data = await res.json();
       if (data.ok) {
-        const u = { email: data.email };
-        setUser(u);
-        localStorage.setItem(SESSION_KEY, JSON.stringify(u));
-        setView("dashboard");
-        showToast(`Welcome, ${data.email}!`);
+        const nextStep: Step =
+          state.selectedColleges.length > 0 ? "dashboard" : "onboarding-schools";
+        persist({ user: { email: data.email }, step: nextStep });
       } else {
         setAuthError(data.error || "Authentication failed");
       }
@@ -150,400 +149,696 @@ export default function Home() {
     } finally {
       setAuthLoading(false);
     }
-  };
+  }
 
-  const handleLogout = () => {
-    localStorage.removeItem(SESSION_KEY);
-    setUser(null);
-    setView("auth");
-  };
+  function logout() {
+    localStorage.removeItem("edutracker_state");
+    setState({
+      user: null,
+      selectedColleges: [],
+      selectedDeadlines: [],
+      reminderPrefs: DEFAULT_PREFS,
+      step: "auth",
+    });
+  }
 
-  const toggleSchool = (id: string) => {
-    const next = selectedIds.includes(id)
-      ? selectedIds.filter((x) => x !== id)
-      : [...selectedIds, id];
-    setSelectedIds(next);
-    saveSelectedIds(next);
-    showToast(selectedIds.includes(id) ? "School removed" : "School added to your list!");
-  };
+  // School selection
+  function toggleCollege(id: string) {
+    const college = COLLEGES.find((c) => c.id === id);
+    if (!college) return;
 
-  const selectedColleges = colleges.filter((c) => selectedIds.includes(c.id));
+    setState((prev) => {
+      let newSelected = [...prev.selectedColleges];
+      let newDeadlines = [...prev.selectedDeadlines];
 
-  const allDeadlines = selectedColleges
-    .flatMap((c) =>
-      c.deadlines.map((d) => ({
-        ...d,
-        collegeName: c.name,
-        collegeId: c.id,
-        days: daysUntil(d.date),
-      }))
-    )
-    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+      if (newSelected.includes(id)) {
+        newSelected = newSelected.filter((s) => s !== id);
+        newDeadlines = newDeadlines.filter((d) => d.collegeId !== id);
+      } else {
+        newSelected.push(id);
+        // Auto-add all available deadlines for this college
+        const types: DeadlineType[] = ["EA", "ED", "RD", "Scholarship"];
+        types.forEach((type) => {
+          const dateKey = type.toLowerCase() as "ea" | "ed" | "rd" | "scholarship";
+          const date = college[dateKey];
+          if (date) {
+            newDeadlines.push({
+              collegeId: id,
+              collegeName: college.name,
+              type,
+              date,
+            });
+          }
+        });
+      }
 
-  const upcomingDeadlines = allDeadlines.filter((d) => d.days >= 0).slice(0, 5);
+      const merged = { ...prev, selectedColleges: newSelected, selectedDeadlines: newDeadlines };
+      localStorage.setItem("edutracker_state", JSON.stringify(merged));
+      return merged;
+    });
+  }
 
-  const allTags = ["All", ...Array.from(new Set(colleges.flatMap((c) => c.tags)))];
+  function toggleDeadline(collegeId: string, type: DeadlineType, date: string, collegeName: string) {
+    setState((prev) => {
+      const exists = prev.selectedDeadlines.find(
+        (d) => d.collegeId === collegeId && d.type === type
+      );
+      let newDeadlines: SelectedDeadline[];
+      if (exists) {
+        newDeadlines = prev.selectedDeadlines.filter(
+          (d) => !(d.collegeId === collegeId && d.type === type)
+        );
+      } else {
+        newDeadlines = [...prev.selectedDeadlines, { collegeId, collegeName, type, date }];
+      }
+      const merged = { ...prev, selectedDeadlines: newDeadlines };
+      localStorage.setItem("edutracker_state", JSON.stringify(merged));
+      return merged;
+    });
+  }
 
-  const filteredColleges = colleges.filter((c) => {
-    const matchesSearch =
-      c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      c.location.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesTag = filterTag === "All" || c.tags.includes(filterTag);
-    return matchesSearch && matchesTag;
+  async function saveRemindersToDb() {
+    if (!state.user) return;
+    setSaveStatus("saving");
+    try {
+      await fetch("/api/reminders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: state.user.email,
+          deadlines: state.selectedDeadlines,
+          prefs: state.reminderPrefs,
+        }),
+      });
+      setSaveStatus("saved");
+      setReminderSaved(true);
+      setTimeout(() => setSaveStatus(""), 3000);
+    } catch {
+      setSaveStatus("error");
+    }
+  }
+
+  const filteredColleges = COLLEGES.filter((c) => {
+    const matchSearch =
+      schoolSearch === "" ||
+      c.name.toLowerCase().includes(schoolSearch.toLowerCase()) ||
+      c.location.toLowerCase().includes(schoolSearch.toLowerCase());
+    const matchFilter =
+      deadlineFilter === "ALL" ||
+      (deadlineFilter === "EA" && c.ea) ||
+      (deadlineFilter === "ED" && c.ed) ||
+      (deadlineFilter === "RD" && c.rd) ||
+      (deadlineFilter === "Scholarship" && c.scholarship);
+    return matchSearch && matchFilter;
   });
 
-  const saveAdminCollege = (updated: College) => {
-    const next = colleges.map((c) => (c.id === updated.id ? updated : c));
-    setColleges(next);
-    saveColleges(next);
-    setEditingCollege(null);
-    setAdminView("list");
-    showToast("College updated!");
-  };
+  const upcomingDeadlines = state.selectedDeadlines
+    .filter((d) => (showPast ? true : daysUntil(d.date) >= 0))
+    .filter((d) => dashFilter === "ALL" || d.type === dashFilter)
+    .sort((a, b) => {
+      if (dashSort === "date") return new Date(a.date).getTime() - new Date(b.date).getTime();
+      return a.collegeName.localeCompare(b.collegeName);
+    });
 
-  const addAdminCollege = () => {
-    const newCollege: College = {
-      id: `college_${Date.now()}`,
-      name: "New College",
-      location: "City, State",
-      deadlines: [{ type: "RD", date: "2025-01-01" }],
-      tags: ["Other"],
-    };
-    const next = [...colleges, newCollege];
-    setColleges(next);
-    saveColleges(next);
-    setEditingCollege(newCollege);
-    setAdminView("edit");
-  };
+  const nextDeadline = state.selectedDeadlines
+    .filter((d) => daysUntil(d.date) >= 0)
+    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())[0];
 
-  const deleteAdminCollege = (id: string) => {
-    const next = colleges.filter((c) => c.id !== id);
-    setColleges(next);
-    saveColleges(next);
-    showToast("College deleted");
-  };
+  // ─── RENDER ───────────────────────────────────────────────────────────────
 
-  // Calendar helpers
-  const calYear = calendarMonth.getFullYear();
-  const calMonth = calendarMonth.getMonth();
-  const firstDay = new Date(calYear, calMonth, 1).getDay();
-  const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
-
-  const deadlinesInMonth = allDeadlines.filter((d) => {
-    const dd = new Date(d.date + "T00:00:00");
-    return dd.getFullYear() === calYear && dd.getMonth() === calMonth;
-  });
-
-  const deadlinesByDay: Record<number, typeof allDeadlines> = {};
-  deadlinesInMonth.forEach((d) => {
-    const day = new Date(d.date + "T00:00:00").getDate();
-    if (!deadlinesByDay[day]) deadlinesByDay[day] = [];
-    deadlinesByDay[day].push(d);
-  });
-
-  const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"];
-
-  if (view === "auth") {
+  if (state.step === "auth") {
     return (
       <div style={styles.authPage}>
         <div style={styles.authCard}>
-          <div style={styles.logo}>🎓 Edutracker</div>
-          <p style={styles.tagline}>Never miss a college application deadline</p>
-          <div style={styles.authTabs}>
+          <div style={styles.logo}>🎓</div>
+          <h1 style={styles.brandName}>Edutracker</h1>
+          <p style={styles.brandTagline}>Never miss a college application deadline</p>
+
+          <div style={styles.tabRow}>
             <button
-              style={{ ...styles.authTab, ...(authMode === "login" ? styles.authTabActive : {}) }}
+              style={{ ...styles.tab, ...(authMode === "login" ? styles.tabActive : {}) }}
               onClick={() => setAuthMode("login")}
-            >Log In</button>
+            >
+              Log In
+            </button>
             <button
-              style={{ ...styles.authTab, ...(authMode === "signup" ? styles.authTabActive : {}) }}
+              style={{ ...styles.tab, ...(authMode === "signup" ? styles.tabActive : {}) }}
               onClick={() => setAuthMode("signup")}
-            >Sign Up</button>
+            >
+              Sign Up
+            </button>
           </div>
-          <input
-            style={styles.input}
-            type="email"
-            placeholder="Email address"
-            value={authEmail}
-            onChange={(e) => setAuthEmail(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleAuth()}
-          />
-          <input
-            style={styles.input}
-            type="password"
-            placeholder="Password"
-            value={authPassword}
-            onChange={(e) => setAuthPassword(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleAuth()}
-          />
-          {authError && <p style={styles.authError}>{authError}</p>}
-          <button style={styles.btnPrimary} onClick={handleAuth} disabled={authLoading}>
-            {authLoading ? "Loading..." : authMode === "login" ? "Log In" : "Create Account"}
-          </button>
-          <button style={styles.btnGhost} onClick={() => { setView("dashboard"); }}>
-            Browse as guest
-          </button>
+
+          <form onSubmit={handleAuth} style={styles.form}>
+            <label style={styles.label}>Email</label>
+            <input
+              type="email"
+              required
+              value={authEmail}
+              onChange={(e) => setAuthEmail(e.target.value)}
+              style={styles.input}
+              placeholder="you@email.com"
+            />
+            <label style={styles.label}>Password</label>
+            <input
+              type="password"
+              required
+              value={authPassword}
+              onChange={(e) => setAuthPassword(e.target.value)}
+              style={styles.input}
+              placeholder="••••••••"
+            />
+            {authError && <p style={styles.errorMsg}>{authError}</p>}
+            <button type="submit" style={styles.primaryBtn} disabled={authLoading}>
+              {authLoading ? "Loading…" : authMode === "login" ? "Log In" : "Create Account"}
+            </button>
+          </form>
+
+          <div style={styles.features}>
+            <div style={styles.featureItem}>📅 200+ colleges with real deadlines</div>
+            <div style={styles.featureItem}>🔔 Automated reminders at 30, 14, 7 & 1 day</div>
+            <div style={styles.featureItem}>📊 Personal deadline dashboard</div>
+          </div>
         </div>
       </div>
     );
   }
 
-  if (view === "admin") {
+  if (state.step === "onboarding-schools") {
+    const selectedCount = state.selectedColleges.length;
     return (
       <div style={styles.page}>
-        {toast && <div style={styles.toast}>{toast}</div>}
-        <nav style={styles.nav}>
-          <div style={styles.navLogo}>🎓 Edutracker <span style={styles.adminBadge}>Admin</span></div>
-          <div style={styles.navLinks}>
-            <button style={styles.navBtn} onClick={() => setView("dashboard")}>← Dashboard</button>
-            {user && <button style={styles.navBtnDanger} onClick={handleLogout}>Logout</button>}
+        <header style={styles.header}>
+          <span style={styles.headerLogo}>🎓 Edutracker</span>
+          <div style={styles.stepIndicator}>
+            <span style={styles.stepActive}>1. Select Schools</span>
+            <span style={styles.stepDivider}>›</span>
+            <span style={styles.stepInactive}>2. Set Reminders</span>
+            <span style={styles.stepDivider}>›</span>
+            <span style={styles.stepInactive}>3. Dashboard</span>
           </div>
-        </nav>
+          <button style={styles.ghostBtn} onClick={logout}>Logout</button>
+        </header>
+
         <div style={styles.container}>
-          <div style={styles.pageHeader}>
-            <h1 style={styles.h1}>Admin: Manage Colleges</h1>
-            <button style={styles.btnPrimary} onClick={addAdminCollege}>+ Add College</button>
+          <h2 style={styles.pageTitle}>Choose Your Target Schools</h2>
+          <p style={styles.pageSubtitle}>
+            Select the colleges you&apos;re applying to. We&apos;ll track all their deadlines for you.
+          </p>
+
+          <div style={styles.searchRow}>
+            <input
+              type="text"
+              placeholder="Search colleges by name or location…"
+              value={schoolSearch}
+              onChange={(e) => setSchoolSearch(e.target.value)}
+              style={styles.searchInput}
+            />
+            <div style={styles.filterBtns}>
+              {(["ALL", "EA", "ED", "RD", "Scholarship"] as const).map((f) => (
+                <button
+                  key={f}
+                  style={{
+                    ...styles.filterBtn,
+                    ...(deadlineFilter === f ? styles.filterBtnActive : {}),
+                  }}
+                  onClick={() => setDeadlineFilter(f)}
+                >
+                  {f}
+                </button>
+              ))}
+            </div>
           </div>
 
-          {adminView === "edit" && editingCollege ? (
-            <AdminEditForm
-              college={editingCollege}
-              onSave={saveAdminCollege}
-              onCancel={() => { setAdminView("list"); setEditingCollege(null); }}
-            />
-          ) : (
-            <div style={styles.adminList}>
-              {colleges.map((c) => (
-                <div key={c.id} style={styles.adminRow}>
-                  <div>
-                    <strong>{c.name}</strong>
-                    <span style={styles.adminLocation}> · {c.location}</span>
-                    <div style={{ marginTop: 4 }}>
-                      {c.deadlines.map((d, i) => (
-                        <span key={i} style={{ ...styles.badge, background: deadlineColor(d.type) }}>
-                          {d.type}: {d.date}
+          <div style={styles.onboardingTabs}>
+            <button
+              style={{
+                ...styles.onboardTab,
+                ...(onboardingTab === "search" ? styles.onboardTabActive : {}),
+              }}
+              onClick={() => setOnboardingTab("search")}
+            >
+              All Schools ({filteredColleges.length})
+            </button>
+            <button
+              style={{
+                ...styles.onboardTab,
+                ...(onboardingTab === "selected" ? styles.onboardTabActive : {}),
+              }}
+              onClick={() => setOnboardingTab("selected")}
+            >
+              Selected ({selectedCount})
+            </button>
+          </div>
+
+          <div style={styles.collegeGrid}>
+            {(onboardingTab === "search" ? filteredColleges : COLLEGES.filter((c) => state.selectedColleges.includes(c.id))).map(
+              (college) => {
+                const isSelected = state.selectedColleges.includes(college.id);
+                return (
+                  <div
+                    key={college.id}
+                    style={{
+                      ...styles.collegeCard,
+                      ...(isSelected ? styles.collegeCardSelected : {}),
+                    }}
+                    onClick={() => toggleCollege(college.id)}
+                  >
+                    <div style={styles.collegeCardTop}>
+                      <div>
+                        <div style={styles.collegeName}>{college.name}</div>
+                        <div style={styles.collegeLocation}>
+                          📍 {college.location} · #{college.rank} Ranked
+                        </div>
+                      </div>
+                      <div style={isSelected ? styles.checkOn : styles.checkOff}>
+                        {isSelected ? "✓" : "+"}
+                      </div>
+                    </div>
+                    <div style={styles.deadlinePills}>
+                      {college.ea && (
+                        <span style={{ ...styles.pill, ...styles.pillEA }}>
+                          EA {formatDate(college.ea)}
+                        </span>
+                      )}
+                      {college.ed && (
+                        <span style={{ ...styles.pill, ...styles.pillED }}>
+                          ED {formatDate(college.ed)}
+                        </span>
+                      )}
+                      {college.rd && (
+                        <span style={{ ...styles.pill, ...styles.pillRD }}>
+                          RD {formatDate(college.rd)}
+                        </span>
+                      )}
+                      {college.scholarship && (
+                        <span style={{ ...styles.pill, ...styles.pillScholarship }}>
+                          $ {formatDate(college.scholarship)}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              }
+            )}
+          </div>
+
+          <div style={styles.stickyFooter}>
+            <span style={styles.selectedCount}>
+              {selectedCount} school{selectedCount !== 1 ? "s" : ""} selected
+            </span>
+            <button
+              style={{
+                ...styles.primaryBtn,
+                ...(selectedCount === 0 ? styles.btnDisabled : {}),
+              }}
+              disabled={selectedCount === 0}
+              onClick={() => persist({ step: "onboarding-reminders" })}
+            >
+              Continue →
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (state.step === "onboarding-reminders") {
+    const prefs = state.reminderPrefs;
+    return (
+      <div style={styles.page}>
+        <header style={styles.header}>
+          <span style={styles.headerLogo}>🎓 Edutracker</span>
+          <div style={styles.stepIndicator}>
+            <span style={styles.stepDone}>✓ Schools</span>
+            <span style={styles.stepDivider}>›</span>
+            <span style={styles.stepActive}>2. Set Reminders</span>
+            <span style={styles.stepDivider}>›</span>
+            <span style={styles.stepInactive}>3. Dashboard</span>
+          </div>
+          <button style={styles.ghostBtn} onClick={logout}>Logout</button>
+        </header>
+
+        <div style={styles.container}>
+          <h2 style={styles.pageTitle}>Set Up Your Reminders</h2>
+          <p style={styles.pageSubtitle}>
+            We&apos;ll alert you before each deadline so you never miss an application.
+          </p>
+
+          <div style={styles.reminderSection}>
+            <h3 style={styles.sectionTitle}>📬 Notification Channels</h3>
+            <div style={styles.toggleRow}>
+              <label style={styles.toggleLabel}>
+                <input
+                  type="checkbox"
+                  checked={prefs.email}
+                  onChange={(e) =>
+                    persist({ reminderPrefs: { ...prefs, email: e.target.checked } })
+                  }
+                  style={styles.checkbox}
+                />
+                Email reminders (sent to {state.user?.email})
+              </label>
+            </div>
+            <div style={styles.toggleRow}>
+              <label style={styles.toggleLabel}>
+                <input
+                  type="checkbox"
+                  checked={prefs.sms}
+                  onChange={(e) =>
+                    persist({ reminderPrefs: { ...prefs, sms: e.target.checked } })
+                  }
+                  style={styles.checkbox}
+                />
+                SMS text message reminders
+              </label>
+            </div>
+            {prefs.sms && (
+              <input
+                type="tel"
+                placeholder="(555) 867-5309"
+                value={prefs.smsNumber}
+                onChange={(e) =>
+                  persist({ reminderPrefs: { ...prefs, smsNumber: e.target.value } })
+                }
+                style={{ ...styles.input, marginTop: 8, maxWidth: 280 }}
+              />
+            )}
+          </div>
+
+          <div style={styles.reminderSection}>
+            <h3 style={styles.sectionTitle}>⏰ Reminder Schedule</h3>
+            <p style={styles.sectionDesc}>
+              Choose when to receive reminders before each deadline:
+            </p>
+            <div style={styles.intervalGrid}>
+              {[30, 14, 7, 1].map((days) => {
+                const active = prefs.intervals.includes(days);
+                return (
+                  <button
+                    key={days}
+                    style={{
+                      ...styles.intervalBtn,
+                      ...(active ? styles.intervalBtnActive : {}),
+                    }}
+                    onClick={() => {
+                      const newIntervals = active
+                        ? prefs.intervals.filter((i) => i !== days)
+                        : [...prefs.intervals, days].sort((a, b) => b - a);
+                      persist({ reminderPrefs: { ...prefs, intervals: newIntervals } });
+                    }}
+                  >
+                    <span style={styles.intervalNum}>{days}</span>
+                    <span style={styles.intervalUnit}>day{days !== 1 ? "s" : ""} before</span>
+                    {active && <span style={styles.intervalCheck}>✓</span>}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div style={styles.reminderSection}>
+            <h3 style={styles.sectionTitle}>📋 Your Selected Deadlines</h3>
+            <p style={styles.sectionDesc}>
+              Fine-tune which specific deadlines to track:
+            </p>
+            <div style={styles.deadlineList}>
+              {state.selectedColleges.map((collegeId) => {
+                const college = COLLEGES.find((c) => c.id === collegeId);
+                if (!college) return null;
+                const types: DeadlineType[] = ["EA", "ED", "RD", "Scholarship"];
+                return (
+                  <div key={collegeId} style={styles.deadlineCollegeRow}>
+                    <div style={styles.deadlineCollegeName}>{college.name}</div>
+                    <div style={styles.deadlineTypeRow}>
+                      {types.map((type) => {
+                        const dateKey = type.toLowerCase() as keyof College;
+                        const date = college[dateKey] as string | undefined;
+                        if (!date) return null;
+                        const tracked = state.selectedDeadlines.find(
+                          (d) => d.collegeId === collegeId && d.type === type
+                        );
+                        return (
+                          <button
+                            key={type}
+                            style={{
+                              ...styles.deadlineTypeBtn,
+                              ...(tracked ? styles.deadlineTypeBtnActive : {}),
+                            }}
+                            onClick={() => toggleDeadline(collegeId, type, date, college.name)}
+                          >
+                            {tracked ? "✓" : ""} {type} {formatDate(date)}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div style={styles.stickyFooter}>
+            <button
+              style={styles.ghostBtn}
+              onClick={() => persist({ step: "onboarding-schools" })}
+            >
+              ← Back
+            </button>
+            <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+              {saveStatus === "saved" && (
+                <span style={{ color: "#22c55e", fontSize: 14 }}>✓ Reminders saved!</span>
+              )}
+              {saveStatus === "error" && (
+                <span style={{ color: "#ef4444", fontSize: 14 }}>Save failed. Continuing locally.</span>
+              )}
+              <button
+                style={styles.secondaryBtn}
+                onClick={saveRemindersToDb}
+                disabled={saveStatus === "saving"}
+              >
+                {saveStatus === "saving" ? "Saving…" : "💾 Save Reminders"}
+              </button>
+              <button
+                style={styles.primaryBtn}
+                onClick={() => persist({ step: "dashboard" })}
+              >
+                Go to Dashboard →
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // DASHBOARD
+  const totalDeadlines = state.selectedDeadlines.length;
+  const upcomingCount = state.selectedDeadlines.filter((d) => daysUntil(d.date) >= 0).length;
+  const urgentCount = state.selectedDeadlines.filter(
+    (d) => daysUntil(d.date) >= 0 && daysUntil(d.date) <= 7
+  ).length;
+
+  return (
+    <div style={styles.page}>
+      <header style={styles.header}>
+        <span style={styles.headerLogo}>🎓 Edutracker</span>
+        <nav style={styles.nav}>
+          <button
+            style={styles.navBtn}
+            onClick={() => persist({ step: "onboarding-schools" })}
+          >
+            + Add Schools
+          </button>
+          <button
+            style={styles.navBtn}
+            onClick={() => persist({ step: "onboarding-reminders" })}
+          >
+            ⚙ Reminders
+          </button>
+        </nav>
+        <div style={styles.userChip}>
+          <span>👤 {state.user?.email}</span>
+          <button style={styles.logoutBtn} onClick={logout}>
+            Logout
+          </button>
+        </div>
+      </header>
+
+      <div style={styles.container}>
+        <div style={styles.dashboardHero}>
+          <div>
+            <h2 style={styles.pageTitle}>Your Application Dashboard</h2>
+            {nextDeadline && (
+              <p style={styles.nextDeadlineHint}>
+                🚨 Next up:{" "}
+                <strong>{nextDeadline.collegeName}</strong> {nextDeadline.type} in{" "}
+                <strong style={{ color: urgencyColor(daysUntil(nextDeadline.date)) }}>
+                  {urgencyLabel(daysUntil(nextDeadline.date))}
+                </strong>{" "}
+                ({formatDate(nextDeadline.date)})
+              </p>
+            )}
+          </div>
+          <div style={styles.statsRow}>
+            <div style={styles.statCard}>
+              <div style={styles.statNum}>{state.selectedColleges.length}</div>
+              <div style={styles.statLabel}>Schools</div>
+            </div>
+            <div style={styles.statCard}>
+              <div style={styles.statNum}>{upcomingCount}</div>
+              <div style={styles.statLabel}>Upcoming</div>
+            </div>
+            <div style={{ ...styles.statCard, ...(urgentCount > 0 ? styles.statCardUrgent : {}) }}>
+              <div style={styles.statNum}>{urgentCount}</div>
+              <div style={styles.statLabel}>Urgent ≤7d</div>
+            </div>
+            <div style={styles.statCard}>
+              <div style={styles.statNum}>{totalDeadlines}</div>
+              <div style={styles.statLabel}>Total</div>
+            </div>
+          </div>
+        </div>
+
+        <div style={styles.dashControls}>
+          <div style={styles.filterBtns}>
+            {(["ALL", "EA", "ED", "RD", "Scholarship"] as const).map((f) => (
+              <button
+                key={f}
+                style={{
+                  ...styles.filterBtn,
+                  ...(dashFilter === f ? styles.filterBtnActive : {}),
+                }}
+                onClick={() => setDashFilter(f)}
+              >
+                {f}
+              </button>
+            ))}
+          </div>
+          <div style={styles.dashControls2}>
+            <label style={styles.toggleLabel}>
+              <input
+                type="checkbox"
+                checked={showPast}
+                onChange={(e) => setShowPast(e.target.checked)}
+                style={styles.checkbox}
+              />
+              Show past
+            </label>
+            <select
+              value={dashSort}
+              onChange={(e) => setDashSort(e.target.value as "date" | "name")}
+              style={styles.select}
+            >
+              <option value="date">Sort by Date</option>
+              <option value="name">Sort by Name</option>
+            </select>
+          </div>
+        </div>
+
+        {upcomingDeadlines.length === 0 ? (
+          <div style={styles.emptyState}>
+            <div style={styles.emptyIcon}>📭</div>
+            <p style={styles.emptyText}>No deadlines found.</p>
+            <button
+              style={styles.primaryBtn}
+              onClick={() => persist({ step: "onboarding-schools" })}
+            >
+              Add Schools
+            </button>
+          </div>
+        ) : (
+          <div style={styles.timelineContainer}>
+            {upcomingDeadlines.map((dl, i) => {
+              const days = daysUntil(dl.date);
+              const color = urgencyColor(days);
+              const isPast = days < 0;
+              return (
+                <div
+                  key={`${dl.collegeId}-${dl.type}`}
+                  style={{
+                    ...styles.timelineItem,
+                    ...(isPast ? styles.timelineItemPast : {}),
+                    animationDelay: `${i * 40}ms`,
+                  }}
+                >
+                  <div style={{ ...styles.timelineDot, background: color }} />
+                  <div style={styles.timelineContent}>
+                    <div style={styles.timelineTop}>
+                      <div>
+                        <span style={styles.timelineCollege}>{dl.collegeName}</span>
+                        <span
+                          style={{
+                            ...styles.timelineType,
+                            background:
+                              dl.type === "EA"
+                                ? "#dbeafe"
+                                : dl.type === "ED"
+                                ? "#fce7f3"
+                                : dl.type === "RD"
+                                ? "#dcfce7"
+                                : "#fef9c3",
+                            color:
+                              dl.type === "EA"
+                                ? "#1d4ed8"
+                                : dl.type === "ED"
+                                ? "#be185d"
+                                : dl.type === "RD"
+                                ? "#15803d"
+                                : "#a16207",
+                          }}
+                        >
+                          {dl.type}
+                        </span>
+                      </div>
+                      <div style={styles.timelineRight}>
+                        <span style={styles.timelineDate}>{formatDate(dl.date)}</span>
+                        <span
+                          style={{
+                            ...styles.countdown,
+                            background: color,
+                          }}
+                        >
+                          {urgencyLabel(days)}
+                        </span>
+                      </div>
+                    </div>
+                    <div style={styles.reminderBadges}>
+                      {state.reminderPrefs.email && (
+                        <span style={styles.badge}>📧 Email</span>
+                      )}
+                      {state.reminderPrefs.sms && (
+                        <span style={styles.badge}>📱 SMS</span>
+                      )}
+                      {state.reminderPrefs.intervals.map((days_) => (
+                        <span key={days_} style={styles.badge}>
+                          {days_}d
                         </span>
                       ))}
                     </div>
                   </div>
-                  <div style={styles.adminActions}>
-                    <button style={styles.btnEdit} onClick={() => { setEditingCollege(c); setAdminView("edit"); }}>Edit</button>
-                    <button style={styles.btnDanger} onClick={() => deleteAdminCollege(c.id)}>Delete</button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  if (view === "calendar") {
-    return (
-      <div style={styles.page}>
-        {toast && <div style={styles.toast}>{toast}</div>}
-        <nav style={styles.nav}>
-          <div style={styles.navLogo}>🎓 Edutracker</div>
-          <div style={styles.navLinks}>
-            <button style={styles.navBtn} onClick={() => setView("dashboard")}>← Dashboard</button>
-            {user ? (
-              <span style={styles.navUser}>{user.email} <button style={styles.navBtnDanger} onClick={handleLogout}>Logout</button></span>
-            ) : (
-              <button style={styles.navBtn} onClick={() => setView("auth")}>Log In</button>
-            )}
-          </div>
-        </nav>
-        <div style={styles.container}>
-          <div style={styles.pageHeader}>
-            <h1 style={styles.h1}>Deadline Calendar</h1>
-            <div style={styles.viewToggle}>
-              <button style={listView === "list" ? styles.toggleActive : styles.toggleInactive} onClick={() => setListView("list")}>List</button>
-              <button style={listView === "calendar" ? styles.toggleActive : styles.toggleInactive} onClick={() => setListView("calendar")}>Calendar</button>
-            </div>
-          </div>
-
-          {selectedIds.length === 0 ? (
-            <div style={styles.emptyState}>
-              <div style={styles.emptyIcon}>📋</div>
-              <p>You haven&apos;t selected any schools yet.</p>
-              <button style={styles.btnPrimary} onClick={() => setView("dashboard")}>Browse Schools</button>
-            </div>
-          ) : listView === "list" ? (
-            <div>
-              <div style={styles.legendRow}>
-                {(["EA","ED","ED2","RD","Scholarship"] as Deadline["type"][]).map((t) => (
-                  <span key={t} style={{ ...styles.badge, background: deadlineColor(t) }}>{t}</span>
-                ))}
-              </div>
-              {allDeadlines.map((d, i) => (
-                <div key={i} style={{ ...styles.deadlineRow, ...urgencyStyle(d.days) }}>
-                  <span style={{ ...styles.deadlineBadge, background: deadlineColor(d.type) }}>{d.type}</span>
-                  <div style={styles.deadlineInfo}>
-                    <strong>{d.collegeName}</strong>
-                    {d.label && <span style={styles.deadlineLabel}> — {d.label}</span>}
-                  </div>
-                  <div style={styles.deadlineMeta}>
-                    <span>{formatDate(d.date)}</span>
-                    <span style={styles.countdown}>
-                      {d.days < 0 ? "Passed" : d.days === 0 ? "Today!" : `${d.days}d left`}
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div>
-              <div style={styles.calNav}>
-                <button style={styles.calNavBtn} onClick={() => setCalendarMonth(new Date(calYear, calMonth - 1, 1))}>‹</button>
-                <span style={styles.calMonthLabel}>{monthNames[calMonth]} {calYear}</span>
-                <button style={styles.calNavBtn} onClick={() => setCalendarMonth(new Date(calYear, calMonth + 1, 1))}>›</button>
-              </div>
-              <div style={styles.calGrid}>
-                {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map((d) => (
-                  <div key={d} style={styles.calDayHeader}>{d}</div>
-                ))}
-                {Array.from({ length: firstDay }).map((_, i) => (
-                  <div key={`empty-${i}`} style={styles.calCell} />
-                ))}
-                {Array.from({ length: daysInMonth }).map((_, i) => {
-                  const day = i + 1;
-                  const events = deadlinesByDay[day] || [];
-                  const isToday = new Date().getDate() === day && new Date().getMonth() === calMonth && new Date().getFullYear() === calYear;
-                  return (
-                    <div key={day} style={{ ...styles.calCell, ...(isToday ? styles.calToday : {}) }}>
-                      <div style={styles.calDayNum}>{day}</div>
-                      {events.map((e, j) => (
-                        <div key={j} style={{ ...styles.calEvent, background: deadlineColor(e.type) }}>
-                          {e.type} · {e.collegeName.split(" ")[0]}
-                        </div>
-                      ))}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  // Dashboard
-  return (
-    <div style={styles.page}>
-      {toast && <div style={styles.toast}>{toast}</div>}
-      <nav style={styles.nav}>
-        <div style={styles.navLogo}>🎓 Edutracker</div>
-        <div style={styles.navLinks}>
-          {selectedIds.length > 0 && (
-            <button style={styles.navBtn} onClick={() => setView("calendar")}>My Deadlines ({allDeadlines.length})</button>
-          )}
-          <button style={styles.navBtn} onClick={() => setView("admin")}>Admin</button>
-          {user ? (
-            <span style={styles.navUser}>{user.email} <button style={styles.navBtnDanger} onClick={handleLogout}>Logout</button></span>
-          ) : (
-            <button style={styles.navBtn} onClick={() => setView("auth")}>Log In</button>
-          )}
-        </div>
-      </nav>
-
-      <div style={styles.container}>
-        {upcomingDeadlines.length > 0 && (
-          <div style={styles.upcomingBanner}>
-            <strong>⚡ Upcoming Deadlines</strong>
-            <div style={styles.upcomingRow}>
-              {upcomingDeadlines.map((d, i) => (
-                <div key={i} style={{ ...styles.upcomingChip, background: deadlineColor(d.type) }}>
-                  <span>{d.collegeName.split(" ")[0]}</span>
-                  <span style={styles.upcomingType}>{d.type}</span>
-                  <span style={styles.upcomingDays}>{d.days === 0 ? "Today!" : `${d.days}d`}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <div style={styles.pageHeader}>
-          <h1 style={styles.h1}>Find Your Schools</h1>
-          <div style={styles.headerRight}>
-            <span style={styles.selectedCount}>{selectedIds.length} selected</span>
-            {selectedIds.length > 0 && (
-              <button style={styles.btnPrimary} onClick={() => setView("calendar")}>View My Deadlines →</button>
-            )}
-          </div>
-        </div>
-
-        <div style={styles.searchRow}>
-          <input
-            style={styles.searchInput}
-            placeholder="Search schools by name or location..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
-          <select style={styles.select} value={filterTag} onChange={(e) => setFilterTag(e.target.value)}>
-            {allTags.map((t) => <option key={t} value={t}>{t}</option>)}
-          </select>
-        </div>
-
-        <div style={styles.collegeGrid}>
-          {filteredColleges.map((college) => {
-            const isSelected = selectedIds.includes(college.id);
-            const nearestUpcoming = college.deadlines
-              .map((d) => ({ ...d, days: daysUntil(d.date) }))
-              .filter((d) => d.days >= 0)
-              .sort((a, b) => a.days - b.days)[0];
-
-            return (
-              <div key={college.id} style={{ ...styles.collegeCard, ...(isSelected ? styles.collegeCardSelected : {}) }}>
-                <div style={styles.collegeCardHeader}>
-                  <div>
-                    <div style={styles.collegeName}>{college.name}</div>
-                    <div style={styles.collegeLocation}>📍 {college.location}</div>
-                  </div>
                   <button
-                    style={{ ...styles.selectBtn, ...(isSelected ? styles.selectBtnActive : {}) }}
-                    onClick={() => toggleSchool(college.id)}
+                    style={styles.removeBtn}
+                    onClick={() => toggleDeadline(dl.collegeId, dl.type, dl.date, dl.collegeName)}
+                    title="Remove deadline"
                   >
-                    {isSelected ? "✓ Added" : "+ Add"}
+                    ×
                   </button>
                 </div>
-                <div style={styles.tagRow}>
-                  {college.tags.map((t) => (
-                    <span key={t} style={styles.tag}>{t}</span>
-                  ))}
-                </div>
-                <div style={styles.deadlineList}>
-                  {college.deadlines.map((d, i) => {
-                    const days = daysUntil(d.date);
-                    return (
-                      <div key={i} style={styles.deadlineItem}>
-                        <span style={{ ...styles.badge, background: deadlineColor(d.type) }}>{d.type}</span>
-                        <span style={styles.deadlineDate}>{formatDate(d.date)}</span>
-                        {days >= 0 ? (
-                          <span style={{ ...styles.daysChip, ...(days <= 30 ? styles.daysChipUrgent : {}) }}>
-                            {days === 0 ? "Today!" : `${days}d`}
-                          </span>
-                        ) : (
-                          <span style={styles.daysChipPast}>Passed</span>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-                {nearestUpcoming && (
-                  <div style={styles.nextDeadline}>
-                    Next: <strong>{nearestUpcoming.type}</strong> in <strong style={{ color: nearestUpcoming.days <= 30 ? "#dc2626" : "#065f46" }}>{nearestUpcoming.days} days</strong>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        )}
 
-        {filteredColleges.length === 0 && (
-          <div style={styles.emptyState}>
-            <div style={styles.emptyIcon}>🔍</div>
-            <p>No schools match your search.</p>
+        {!reminderSaved && state.selectedDeadlines.length > 0 && (
+          <div style={styles.reminderNudge}>
+            <span>💡 Don&apos;t forget to save your reminder preferences!</span>
+            <button
+              style={styles.primaryBtn}
+              onClick={() => persist({ step: "onboarding-reminders" })}
+            >
+              Set Up Reminders
+            </button>
           </div>
         )}
       </div>
@@ -551,164 +846,455 @@ export default function Home() {
   );
 }
 
-function AdminEditForm({
-  college,
-  onSave,
-  onCancel,
-}: {
-  college: College;
-  onSave: (c: College) => void;
-  onCancel: () => void;
-}) {
-  const [form, setForm] = useState<College>(JSON.parse(JSON.stringify(college)));
-
-  const updateDeadline = (i: number, field: keyof Deadline, value: string) => {
-    const next = [...form.deadlines];
-    (next[i] as Record<string, string>)[field] = value;
-    setForm({ ...form, deadlines: next });
-  };
-
-  const addDeadline = () => {
-    setForm({ ...form, deadlines: [...form.deadlines, { type: "RD", date: "2025-01-01" }] });
-  };
-
-  const removeDeadline = (i: number) => {
-    setForm({ ...form, deadlines: form.deadlines.filter((_, j) => j !== i) });
-  };
-
-  return (
-    <div style={styles.editForm}>
-      <h2 style={styles.h2}>Edit: {college.name}</h2>
-      <label style={styles.label}>College Name</label>
-      <input style={styles.input} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-      <label style={styles.label}>Location</label>
-      <input style={styles.input} value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} />
-      <label style={styles.label}>Tags (comma separated)</label>
-      <input
-        style={styles.input}
-        value={form.tags.join(", ")}
-        onChange={(e) => setForm({ ...form, tags: e.target.value.split(",").map((t) => t.trim()) })}
-      />
-      <label style={styles.label}>Deadlines</label>
-      {form.deadlines.map((d, i) => (
-        <div key={i} style={styles.deadlineEditRow}>
-          <select
-            style={styles.selectSmall}
-            value={d.type}
-            onChange={(e) => updateDeadline(i, "type", e.target.value)}
-          >
-            {["EA","ED","ED2","RD","Scholarship"].map((t) => <option key={t} value={t}>{t}</option>)}
-          </select>
-          <input
-            style={styles.inputDate}
-            type="date"
-            value={d.date}
-            onChange={(e) => updateDeadline(i, "date", e.target.value)}
-          />
-          <input
-            style={styles.inputLabel}
-            placeholder="Label (optional)"
-            value={d.label || ""}
-            onChange={(e) => updateDeadline(i, "label", e.target.value)}
-          />
-          <button style={styles.btnDanger} onClick={() => removeDeadline(i)}>✕</button>
-        </div>
-      ))}
-      <button style={styles.btnSecondary} onClick={addDeadline}>+ Add Deadline</button>
-      <div style={styles.formActions}>
-        <button style={styles.btnPrimary} onClick={() => onSave(form)}>Save</button>
-        <button style={styles.btnGhost} onClick={onCancel}>Cancel</button>
-      </div>
-    </div>
-  );
-}
+// ─── STYLES ────────────────────────────────────────────────────────────────────
 
 const styles: Record<string, React.CSSProperties> = {
-  page: { minHeight: "100vh", background: "#f8fafc", fontFamily: "'Inter', system-ui, sans-serif" },
-  authPage: { minHeight: "100vh", background: "linear-gradient(135deg, #1e3a5f 0%, #2d6a9f 100%)", display: "flex", alignItems: "center", justifyContent: "center" },
-  authCard: { background: "#fff", borderRadius: 20, padding: "48px 40px", width: "100%", maxWidth: 420, boxShadow: "0 20px 60px rgba(0,0,0,0.2)" },
-  logo: { fontSize: 28, fontWeight: 800, textAlign: "center", color: "#1e3a5f", marginBottom: 8 },
-  tagline: { textAlign: "center", color: "#64748b", marginBottom: 28, fontSize: 15 },
-  authTabs: { display: "flex", gap: 0, marginBottom: 20, borderRadius: 10, overflow: "hidden", border: "1px solid #e2e8f0" },
-  authTab: { flex: 1, padding: "10px 0", border: "none", cursor: "pointer", background: "#f8fafc", color: "#64748b", fontWeight: 600, fontSize: 14 },
-  authTabActive: { background: "#1e3a5f", color: "#fff" },
-  input: { width: "100%", padding: "12px 14px", border: "1px solid #e2e8f0", borderRadius: 10, fontSize: 14, marginBottom: 12, boxSizing: "border-box", outline: "none" },
-  authError: { color: "#dc2626", fontSize: 13, marginBottom: 8 },
-  btnPrimary: { width: "100%", padding: "13px 0", background: "#1e3a5f", color: "#fff", border: "none", borderRadius: 10, fontWeight: 700, fontSize: 15, cursor: "pointer", marginBottom: 8 },
-  btnGhost: { width: "100%", padding: "11px 0", background: "transparent", color: "#64748b", border: "1px solid #e2e8f0", borderRadius: 10, fontWeight: 600, fontSize: 14, cursor: "pointer" },
-  btnSecondary: { padding: "9px 18px", background: "#e2e8f0", color: "#1e3a5f", border: "none", borderRadius: 8, fontWeight: 600, fontSize: 13, cursor: "pointer", marginBottom: 12 },
-  btnEdit: { padding: "6px 14px", background: "#3b82f6", color: "#fff", border: "none", borderRadius: 7, fontWeight: 600, fontSize: 13, cursor: "pointer" },
-  btnDanger: { padding: "6px 12px", background: "#fee2e2", color: "#dc2626", border: "none", borderRadius: 7, fontWeight: 600, fontSize: 13, cursor: "pointer" },
-  nav: { background: "#1e3a5f", padding: "14px 32px", display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 100 },
-  navLogo: { color: "#fff", fontWeight: 800, fontSize: 20 },
-  navLinks: { display: "flex", gap: 12, alignItems: "center" },
-  navBtn: { padding: "8px 16px", background: "rgba(255,255,255,0.15)", color: "#fff", border: "none", borderRadius: 8, fontWeight: 600, fontSize: 13, cursor: "pointer" },
-  navBtnDanger: { padding: "6px 12px", background: "transparent", color: "#fca5a5", border: "1px solid #fca5a5", borderRadius: 7, fontWeight: 600, fontSize: 12, cursor: "pointer", marginLeft: 8 },
-  navUser: { color: "#cbd5e1", fontSize: 13, display: "flex", alignItems: "center" },
-  adminBadge: { fontSize: 11, background: "#f59e0b", color: "#fff", borderRadius: 5, padding: "2px 7px", marginLeft: 8, fontWeight: 700 },
-  container: { maxWidth: 1200, margin: "0 auto", padding: "28px 24px" },
-  pageHeader: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 },
-  h1: { fontSize: 26, fontWeight: 800, color: "#1e3a5f", margin: 0 },
-  h2: { fontSize: 20, fontWeight: 700, color: "#1e3a5f", marginBottom: 16 },
-  headerRight: { display: "flex", alignItems: "center", gap: 12 },
-  selectedCount: { fontSize: 13, color: "#64748b", fontWeight: 600 },
-  searchRow: { display: "flex", gap: 12, marginBottom: 24 },
-  searchInput: { flex: 1, padding: "11px 14px", border: "1px solid #e2e8f0", borderRadius: 10, fontSize: 14, outline: "none" },
-  select: { padding: "11px 14px", border: "1px solid #e2e8f0", borderRadius: 10, fontSize: 14, outline: "none", background: "#fff" },
-  collegeGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 18 },
-  collegeCard: { background: "#fff", borderRadius: 14, padding: 20, border: "2px solid #e2e8f0", transition: "all 0.2s" },
-  collegeCardSelected: { border: "2px solid #1e3a5f", boxShadow: "0 4px 20px rgba(30,58,95,0.12)" },
-  collegeCardHeader: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 },
-  collegeName: { fontSize: 15, fontWeight: 700, color: "#1e3a5f", marginBottom: 3 },
+  page: {
+    minHeight: "100vh",
+    background: "#f8fafc",
+    fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif",
+  },
+  authPage: {
+    minHeight: "100vh",
+    background: "linear-gradient(135deg, #1e3a5f 0%, #2563eb 50%, #7c3aed 100%)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 20,
+  },
+  authCard: {
+    background: "#fff",
+    borderRadius: 20,
+    padding: "40px 48px",
+    width: "100%",
+    maxWidth: 440,
+    boxShadow: "0 25px 60px rgba(0,0,0,0.25)",
+    textAlign: "center",
+  },
+  logo: { fontSize: 52, marginBottom: 8 },
+  brandName: { fontSize: 32, fontWeight: 800, color: "#1e3a5f", margin: "0 0 6px" },
+  brandTagline: { color: "#64748b", fontSize: 15, margin: "0 0 28px" },
+  tabRow: {
+    display: "flex",
+    background: "#f1f5f9",
+    borderRadius: 10,
+    padding: 4,
+    marginBottom: 24,
+  },
+  tab: {
+    flex: 1,
+    padding: "10px 0",
+    border: "none",
+    background: "transparent",
+    borderRadius: 8,
+    cursor: "pointer",
+    fontSize: 15,
+    fontWeight: 600,
+    color: "#64748b",
+  },
+  tabActive: { background: "#fff", color: "#2563eb", boxShadow: "0 2px 8px rgba(0,0,0,0.1)" },
+  form: { display: "flex", flexDirection: "column", gap: 4, textAlign: "left" },
+  label: { fontSize: 13, fontWeight: 600, color: "#374151", marginTop: 8, marginBottom: 4 },
+  input: {
+    padding: "10px 14px",
+    border: "1.5px solid #e2e8f0",
+    borderRadius: 8,
+    fontSize: 15,
+    outline: "none",
+    width: "100%",
+    boxSizing: "border-box",
+    transition: "border-color 0.2s",
+  },
+  errorMsg: { color: "#ef4444", fontSize: 13, margin: "4px 0" },
+  primaryBtn: {
+    padding: "12px 24px",
+    background: "linear-gradient(135deg, #2563eb, #7c3aed)",
+    color: "#fff",
+    border: "none",
+    borderRadius: 10,
+    fontSize: 15,
+    fontWeight: 700,
+    cursor: "pointer",
+    marginTop: 8,
+  },
+  secondaryBtn: {
+    padding: "12px 24px",
+    background: "#f1f5f9",
+    color: "#374151",
+    border: "1.5px solid #e2e8f0",
+    borderRadius: 10,
+    fontSize: 15,
+    fontWeight: 600,
+    cursor: "pointer",
+  },
+  ghostBtn: {
+    padding: "8px 16px",
+    background: "transparent",
+    color: "#64748b",
+    border: "1.5px solid #e2e8f0",
+    borderRadius: 8,
+    fontSize: 14,
+    cursor: "pointer",
+  },
+  btnDisabled: { opacity: 0.4, cursor: "not-allowed" },
+  features: {
+    marginTop: 28,
+    display: "flex",
+    flexDirection: "column",
+    gap: 10,
+    textAlign: "left",
+    background: "#f8fafc",
+    borderRadius: 12,
+    padding: "16px 20px",
+  },
+  featureItem: { fontSize: 14, color: "#475569" },
+  header: {
+    background: "#fff",
+    borderBottom: "1px solid #e2e8f0",
+    padding: "0 32px",
+    height: 60,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    position: "sticky",
+    top: 0,
+    zIndex: 100,
+    boxShadow: "0 1px 8px rgba(0,0,0,0.06)",
+  },
+  headerLogo: { fontSize: 20, fontWeight: 800, color: "#1e3a5f" },
+  stepIndicator: { display: "flex", alignItems: "center", gap: 8, fontSize: 13 },
+  stepActive: { fontWeight: 700, color: "#2563eb" },
+  stepInactive: { color: "#94a3b8" },
+  stepDone: { color: "#22c55e", fontWeight: 700 },
+  stepDivider: { color: "#cbd5e1" },
+  nav: { display: "flex", gap: 8 },
+  navBtn: {
+    padding: "8px 16px",
+    background: "#f1f5f9",
+    border: "1.5px solid #e2e8f0",
+    borderRadius: 8,
+    fontSize: 14,
+    cursor: "pointer",
+    fontWeight: 600,
+    color: "#374151",
+  },
+  userChip: { display: "flex", alignItems: "center", gap: 12, fontSize: 14, color: "#374151" },
+  logoutBtn: {
+    padding: "6px 12px",
+    background: "transparent",
+    border: "1px solid #e2e8f0",
+    borderRadius: 6,
+    fontSize: 13,
+    cursor: "pointer",
+    color: "#64748b",
+  },
+  container: { maxWidth: 1100, margin: "0 auto", padding: "32px 24px 120px" },
+  pageTitle: { fontSize: 28, fontWeight: 800, color: "#1e3a5f", margin: "0 0 8px" },
+  pageSubtitle: { color: "#64748b", fontSize: 15, margin: "0 0 24px" },
+  searchRow: {
+    display: "flex",
+    gap: 16,
+    flexWrap: "wrap",
+    marginBottom: 16,
+    alignItems: "center",
+  },
+  searchInput: {
+    flex: 1,
+    minWidth: 240,
+    padding: "10px 16px",
+    border: "1.5px solid #e2e8f0",
+    borderRadius: 10,
+    fontSize: 15,
+    outline: "none",
+  },
+  filterBtns: { display: "flex", gap: 6, flexWrap: "wrap" },
+  filterBtn: {
+    padding: "8px 14px",
+    border: "1.5px solid #e2e8f0",
+    borderRadius: 8,
+    background: "#fff",
+    fontSize: 13,
+    fontWeight: 600,
+    cursor: "pointer",
+    color: "#64748b",
+  },
+  filterBtnActive: {
+    background: "#2563eb",
+    color: "#fff",
+    borderColor: "#2563eb",
+  },
+  onboardingTabs: { display: "flex", gap: 0, marginBottom: 20, borderBottom: "2px solid #e2e8f0" },
+  onboardTab: {
+    padding: "10px 20px",
+    background: "transparent",
+    border: "none",
+    fontSize: 14,
+    fontWeight: 600,
+    cursor: "pointer",
+    color: "#64748b",
+    borderBottom: "2px solid transparent",
+    marginBottom: -2,
+  },
+  onboardTabActive: { color: "#2563eb", borderBottom: "2px solid #2563eb" },
+  collegeGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))",
+    gap: 16,
+    marginBottom: 100,
+  },
+  collegeCard: {
+    background: "#fff",
+    border: "1.5px solid #e2e8f0",
+    borderRadius: 14,
+    padding: "16px 20px",
+    cursor: "pointer",
+    transition: "all 0.2s",
+    userSelect: "none",
+  },
+  collegeCardSelected: {
+    borderColor: "#2563eb",
+    background: "#eff6ff",
+    boxShadow: "0 0 0 3px rgba(37,99,235,0.15)",
+  },
+  collegeCardTop: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 },
+  collegeName: { fontSize: 15, fontWeight: 700, color: "#1e293b", marginBottom: 4 },
   collegeLocation: { fontSize: 12, color: "#64748b" },
-  selectBtn: { padding: "7px 14px", border: "2px solid #e2e8f0", borderRadius: 8, background: "#fff", color: "#475569", fontWeight: 700, fontSize: 13, cursor: "pointer", whiteSpace: "nowrap" },
-  selectBtnActive: { background: "#1e3a5f", color: "#fff", border: "2px solid #1e3a5f" },
-  tagRow: { display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 12 },
-  tag: { fontSize: 11, background: "#f1f5f9", color: "#64748b", borderRadius: 5, padding: "2px 8px", fontWeight: 600 },
-  deadlineList: { display: "flex", flexDirection: "column", gap: 6 },
-  deadlineItem: { display: "flex", alignItems: "center", gap: 8 },
-  deadlineDate: { fontSize: 13, color: "#475569", flex: 1 },
-  badge: { fontSize: 11, color: "#fff", borderRadius: 5, padding: "2px 7px", fontWeight: 700, whiteSpace: "nowrap" },
-  daysChip: { fontSize: 11, background: "#ecfdf5", color: "#065f46", borderRadius: 5, padding: "2px 7px", fontWeight: 700 },
-  daysChipUrgent: { background: "#fee2e2", color: "#dc2626" },
-  daysChipPast: { fontSize: 11, background: "#f3f4f6", color: "#9ca3af", borderRadius: 5, padding: "2px 7px", fontWeight: 600 },
-  nextDeadline: { marginTop: 10, fontSize: 12, color: "#64748b", borderTop: "1px solid #f1f5f9", paddingTop: 8 },
-  upcomingBanner: { background: "#1e3a5f", borderRadius: 14, padding: "16px 20px", marginBottom: 24 },
-  upcomingRow: { display: "flex", gap: 10, marginTop: 10, flexWrap: "wrap" },
-  upcomingChip: { borderRadius: 9, padding: "8px 14px", color: "#fff", display: "flex", flexDirection: "column", alignItems: "center", minWidth: 80 },
-  upcomingType: { fontSize: 11, opacity: 0.85 },
-  upcomingDays: { fontSize: 16, fontWeight: 800 },
-  emptyState: { textAlign: "center", padding: "60px 20px", color: "#64748b" },
-  emptyIcon: { fontSize: 48, marginBottom: 12 },
-  viewToggle: { display: "flex", borderRadius: 9, overflow: "hidden", border: "1px solid #e2e8f0" },
-  toggleActive: { padding: "8px 18px", background: "#1e3a5f", color: "#fff", border: "none", fontWeight: 700, cursor: "pointer", fontSize: 13 },
-  toggleInactive: { padding: "8px 18px", background: "#f8fafc", color: "#64748b", border: "none", fontWeight: 600, cursor: "pointer", fontSize: 13 },
-  deadlineRow: { display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderRadius: 10, marginBottom: 8 },
-  deadlineBadge: { fontSize: 11, color: "#fff", borderRadius: 5, padding: "3px 8px", fontWeight: 700 },
-  deadlineInfo: { flex: 1, fontSize: 14 },
-  deadlineLabel: { color: "#64748b", fontSize: 13 },
-  deadlineMeta: { display: "flex", flexDirection: "column", alignItems: "flex-end", fontSize: 13 },
-  countdown: { fontSize: 12, fontWeight: 700 },
-  legendRow: { display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" },
-  calNav: { display: "flex", alignItems: "center", gap: 16, marginBottom: 16 },
-  calNavBtn: { padding: "6px 16px", background: "#e2e8f0", border: "none", borderRadius: 7, fontSize: 18, cursor: "pointer" },
-  calMonthLabel: { fontSize: 18, fontWeight: 700, color: "#1e3a5f" },
-  calGrid: { display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 2 },
-  calDayHeader: { textAlign: "center", fontSize: 12, fontWeight: 700, color: "#64748b", padding: "6px 0" },
-  calCell: { minHeight: 90, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 8, padding: 6, verticalAlign: "top" },
-  calToday: { background: "#eff6ff", border: "2px solid #3b82f6" },
-  calDayNum: { fontSize: 13, fontWeight: 600, color: "#1e3a5f", marginBottom: 4 },
-  calEvent: { fontSize: 10, color: "#fff", borderRadius: 4, padding: "2px 5px", marginBottom: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
-  adminList: { display: "flex", flexDirection: "column", gap: 10 },
-  adminRow: { background: "#fff", borderRadius: 12, padding: "14px 18px", border: "1px solid #e2e8f0", display: "flex", alignItems: "center", justifyContent: "space-between" },
-  adminLocation: { color: "#64748b", fontSize: 13 },
-  adminActions: { display: "flex", gap: 8 },
-  editForm: { background: "#fff", borderRadius: 14, padding: 28, border: "1px solid #e2e8f0", maxWidth: 700 },
-  label: { display: "block", fontSize: 13, fontWeight: 600, color: "#475569", marginBottom: 5 },
-  deadlineEditRow: { display: "flex", gap: 8, marginBottom: 8, alignItems: "center" },
-  selectSmall: { padding: "8px 10px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 13 },
-  inputDate: { padding: "8px 10px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 13 },
-  inputLabel: { flex: 1, padding: "8px 10px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 13 },
-  formActions: { display: "flex", gap: 10, marginTop: 20 },
-  toast: { position: "fixed", bottom: 28, right: 28, background: "#1e3a5f", color: "#fff", padding: "12px 22px", borderRadius: 10, fontWeight: 600, fontSize: 14, zIndex: 9999, boxShadow: "0 6px 24px rgba(0,0,0,0.2)", animation: "fadeIn 0.2s" },
+  checkOn: {
+    width: 28,
+    height: 28,
+    borderRadius: "50%",
+    background: "#2563eb",
+    color: "#fff",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontWeight: 700,
+    flexShrink: 0,
+    fontSize: 14,
+  },
+  checkOff: {
+    width: 28,
+    height: 28,
+    borderRadius: "50%",
+    border: "1.5px dashed #cbd5e1",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    color: "#94a3b8",
+    flexShrink: 0,
+    fontSize: 18,
+  },
+  deadlinePills: { display: "flex", gap: 6, flexWrap: "wrap" },
+  pill: { fontSize: 11, fontWeight: 600, padding: "3px 8px", borderRadius: 6 },
+  pillEA: { background: "#dbeafe", color: "#1d4ed8" },
+  pillED: { background: "#fce7f3", color: "#be185d" },
+  pillRD: { background: "#dcfce7", color: "#15803d" },
+  pillScholarship: { background: "#fef9c3", color: "#a16207" },
+  stickyFooter: {
+    position: "fixed",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    background: "#fff",
+    borderTop: "1px solid #e2e8f0",
+    padding: "16px 32px",
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    zIndex: 200,
+    boxShadow: "0 -4px 20px rgba(0,0,0,0.08)",
+  },
+  selectedCount: { fontSize: 15, fontWeight: 600, color: "#374151" },
+  reminderSection: {
+    background: "#fff",
+    border: "1.5px solid #e2e8f0",
+    borderRadius: 16,
+    padding: "24px 28px",
+    marginBottom: 20,
+  },
+  sectionTitle: { fontSize: 18, fontWeight: 700, color: "#1e293b", margin: "0 0 12px" },
+  sectionDesc: { fontSize: 14, color: "#64748b", margin: "0 0 16px" },
+  toggleRow: { marginBottom: 10 },
+  toggleLabel: { display: "flex", alignItems: "center", gap: 10, fontSize: 15, cursor: "pointer" },
+  checkbox: { width: 18, height: 18, cursor: "pointer" },
+  intervalGrid: { display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 },
+  intervalBtn: {
+    padding: "20px 12px",
+    border: "1.5px solid #e2e8f0",
+    borderRadius: 14,
+    background: "#f8fafc",
+    cursor: "pointer",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: 4,
+    position: "relative",
+    transition: "all 0.15s",
+  },
+  intervalBtnActive: {
+    borderColor: "#2563eb",
+    background: "#eff6ff",
+    boxShadow: "0 0 0 3px rgba(37,99,235,0.15)",
+  },
+  intervalNum: { fontSize: 28, fontWeight: 800, color: "#1e3a5f" },
+  intervalUnit: { fontSize: 12, color: "#64748b" },
+  intervalCheck: {
+    position: "absolute",
+    top: 8,
+    right: 10,
+    color: "#2563eb",
+    fontWeight: 700,
+    fontSize: 14,
+  },
+  deadlineList: { display: "flex", flexDirection: "column", gap: 12 },
+  deadlineCollegeRow: {
+    border: "1px solid #e2e8f0",
+    borderRadius: 10,
+    padding: "12px 16px",
+    background: "#f8fafc",
+  },
+  deadlineCollegeName: { fontSize: 14, fontWeight: 700, color: "#1e293b", marginBottom: 8 },
+  deadlineTypeRow: { display: "flex", gap: 8, flexWrap: "wrap" },
+  deadlineTypeBtn: {
+    padding: "6px 12px",
+    border: "1.5px solid #e2e8f0",
+    borderRadius: 8,
+    background: "#fff",
+    fontSize: 12,
+    fontWeight: 600,
+    cursor: "pointer",
+    color: "#64748b",
+  },
+  deadlineTypeBtnActive: { background: "#2563eb", color: "#fff", borderColor: "#2563eb" },
+  dashboardHero: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    flexWrap: "wrap",
+    gap: 20,
+    marginBottom: 28,
+  },
+  nextDeadlineHint: { fontSize: 15, color: "#475569", margin: "6px 0 0" },
+  statsRow: { display: "flex", gap: 12 },
+  statCard: {
+    background: "#fff",
+    border: "1.5px solid #e2e8f0",
+    borderRadius: 12,
+    padding: "16px 20px",
+    textAlign: "center",
+    minWidth: 80,
+  },
+  statCardUrgent: { borderColor: "#ef4444", background: "#fff5f5" },
+  statNum: { fontSize: 28, fontWeight: 800, color: "#1e3a5f" },
+  statLabel: { fontSize: 12, color: "#64748b", marginTop: 2 },
+  dashControls: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: 12,
+    marginBottom: 20,
+  },
+  dashControls2: { display: "flex", gap: 16, alignItems: "center" },
+  select: {
+    padding: "8px 12px",
+    border: "1.5px solid #e2e8f0",
+    borderRadius: 8,
+    fontSize: 14,
+    background: "#fff",
+    cursor: "pointer",
+  },
+  timelineContainer: { display: "flex", flexDirection: "column", gap: 10 },
+  timelineItem: {
+    display: "flex",
+    alignItems: "stretch",
+    gap: 16,
+    background: "#fff",
+    border: "1.5px solid #e2e8f0",
+    borderRadius: 14,
+    padding: "16px 20px",
+    position: "relative",
+    animation: "fadeSlideIn 0.3s ease both",
+    transition: "box-shadow 0.2s",
+  },
+  timelineItemPast: { opacity: 0.5 },
+  timelineDot: {
+    width: 12,
+    height: 12,
+    borderRadius: "50%",
+    flexShrink: 0,
+    marginTop: 4,
+  },
+  timelineContent: { flex: 1 },
+  timelineTop: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    flexWrap: "wrap",
+    gap: 8,
+    marginBottom: 8,
+  },
+  timelineCollege: { fontSize: 16, fontWeight: 700, color: "#1e293b", marginRight: 8 },
+  timelineType: {
+    fontSize: 11,
+    fontWeight: 700,
+    padding: "3px 8px",
+    borderRadius: 6,
+    verticalAlign: "middle",
+  },
+  timelineRight: { display: "flex", alignItems: "center", gap: 10 },
+  timelineDate: { fontSize: 14, color: "#64748b", fontWeight: 500 },
+  countdown: {
+    padding: "4px 12px",
+    borderRadius: 20,
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: 800,
+    letterSpacing: "0.02em",
+  },
+  reminderBadges: { display: "flex", gap: 6, flexWrap: "wrap" },
+  badge: {
+    fontSize: 11,
+    padding: "2px 8px",
+    borderRadius: 20,
+    background: "#f1f5f9",
+    color: "#475569",
+    fontWeight: 600,
+    border: "1px solid #e2e8f0",
+  },
+  removeBtn: {
+    background: "transparent",
+    border: "none",
+    color: "#cbd5e1",
+    fontSize: 20,
+    cursor: "pointer",
+    padding: "0 4px",
+    lineHeight: 1,
+    alignSelf: "flex-start",
+    transition: "color 0.15s",
+  },
+  emptyState: {
+    textAlign: "center",
+    padding: "80px 20px",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: 16,
+  },
+  emptyIcon: { fontSize: 64 },
+  emptyText: { fontSize: 18, color: "#64748b" },
+  reminderNudge: {
+    marginTop: 32,
+    padding: "16px 24px",
+    background: "#fffbeb",
+    border: "1.5px solid #fde68a",
+    borderRadius: 12,
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    fontSize: 14,
+    color: "#92400e",
+    flexWrap: "wrap",
+    gap: 12,
+  },
 };

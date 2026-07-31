@@ -1,76 +1,108 @@
 import { NextRequest, NextResponse } from "next/server";
-import { q, ensure, hasDb } from "../../../lib/db";
+import { q, ensure, hasDb } from "@/lib/db";
 
-const prefix = () => process.env.APP_TABLE_PREFIX ?? "app";
+async function setupTable() {
+  await ensure(`
+    CREATE TABLE IF NOT EXISTS edutracker_reminders (
+      id SERIAL PRIMARY KEY,
+      email TEXT NOT NULL,
+      college_id TEXT NOT NULL,
+      college_name TEXT NOT NULL,
+      deadline_type TEXT NOT NULL,
+      deadline_date DATE NOT NULL,
+      notify_email BOOLEAN DEFAULT true,
+      notify_sms BOOLEAN DEFAULT false,
+      sms_number TEXT,
+      intervals TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(email, college_id, deadline_type)
+    )
+  `);
+}
 
 export async function POST(req: NextRequest) {
-  if (!hasDb()) return NextResponse.json({ ok: false, error: "No DB" }, { status: 503 });
   try {
-    await ensure();
-    const body = await req.json();
-    const {
-      userEmail, selectedSchools, emailEnabled, smsEnabled,
-      phone, reminder30, reminder7, reminder1
-    } = body;
-
-    if (!userEmail) return NextResponse.json({ error: "Missing email" }, { status: 400 });
-
-    // Upsert reminders
-    await q(
-      `INSERT INTO ${prefix()}_reminders (user_email, email_enabled, sms_enabled, phone, reminder_30, reminder_7, reminder_1)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
-       ON CONFLICT (user_email) DO UPDATE SET
-         email_enabled = EXCLUDED.email_enabled,
-         sms_enabled = EXCLUDED.sms_enabled,
-         phone = EXCLUDED.phone,
-         reminder_30 = EXCLUDED.reminder_30,
-         reminder_7 = EXCLUDED.reminder_7,
-         reminder_1 = EXCLUDED.reminder_1`,
-      [userEmail, emailEnabled, smsEnabled, phone || null, reminder30, reminder7, reminder1]
-    );
-
-    // Sync schools
-    if (Array.isArray(selectedSchools)) {
-      await q(`DELETE FROM ${prefix()}_schools WHERE user_email = $1`, [userEmail]);
-      for (const collegeId of selectedSchools) {
-        await q(
-          `INSERT INTO ${prefix()}_schools (user_email, college_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-          [userEmail, collegeId]
-        );
-      }
+    if (!hasDb()) {
+      return NextResponse.json({ ok: true, message: "Saved locally (no DB)" });
     }
 
-    return NextResponse.json({ ok: true });
+    const body = await req.json() as {
+      email: string;
+      deadlines: Array<{
+        collegeId: string;
+        collegeName: string;
+        type: string;
+        date: string;
+      }>;
+      prefs: {
+        email: boolean;
+        sms: boolean;
+        smsNumber: string;
+        intervals: number[];
+      };
+    };
+
+    await setupTable();
+
+    // Delete old reminders for this user
+    await q("DELETE FROM edutracker_reminders WHERE email = $1", [body.email]);
+
+    // Insert new reminders
+    for (const dl of body.deadlines) {
+      await q(
+        `INSERT INTO edutracker_reminders
+          (email, college_id, college_name, deadline_type, deadline_date,
+           notify_email, notify_sms, sms_number, intervals)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         ON CONFLICT (email, college_id, deadline_type) DO UPDATE SET
+           deadline_date = EXCLUDED.deadline_date,
+           notify_email = EXCLUDED.notify_email,
+           notify_sms = EXCLUDED.notify_sms,
+           sms_number = EXCLUDED.sms_number,
+           intervals = EXCLUDED.intervals`,
+        [
+          body.email,
+          dl.collegeId,
+          dl.collegeName,
+          dl.type,
+          dl.date,
+          body.prefs.email,
+          body.prefs.sms,
+          body.prefs.smsNumber || null,
+          JSON.stringify(body.prefs.intervals),
+        ]
+      );
+    }
+
+    return NextResponse.json({ ok: true, saved: body.deadlines.length });
   } catch (err) {
-    console.error(err);
-    return NextResponse.json({ error: "DB error" }, { status: 500 });
+    console.error("Reminders save error:", err);
+    return NextResponse.json({ ok: false, error: "Failed to save reminders" }, { status: 500 });
   }
 }
 
 export async function GET(req: NextRequest) {
-  if (!hasDb()) return NextResponse.json({ ok: false, error: "No DB" }, { status: 503 });
   try {
-    await ensure();
+    if (!hasDb()) {
+      return NextResponse.json({ reminders: [] });
+    }
+
     const { searchParams } = new URL(req.url);
-    const userEmail = searchParams.get("email");
-    if (!userEmail) return NextResponse.json({ error: "Missing email" }, { status: 400 });
+    const email = searchParams.get("email");
+    if (!email) {
+      return NextResponse.json({ error: "Missing email" }, { status: 400 });
+    }
 
-    const reminders = await q(
-      `SELECT * FROM ${prefix()}_reminders WHERE user_email = $1`,
-      [userEmail]
-    );
-    const schools = await q(
-      `SELECT college_id FROM ${prefix()}_schools WHERE user_email = $1`,
-      [userEmail]
+    await setupTable();
+
+    const rows = await q(
+      "SELECT * FROM edutracker_reminders WHERE email = $1 ORDER BY deadline_date ASC",
+      [email]
     );
 
-    return NextResponse.json({
-      ok: true,
-      reminders: reminders[0] ?? null,
-      schools: schools.map((s: { college_id: string }) => s.college_id),
-    });
+    return NextResponse.json({ reminders: rows });
   } catch (err) {
-    console.error(err);
-    return NextResponse.json({ error: "DB error" }, { status: 500 });
+    console.error("Reminders fetch error:", err);
+    return NextResponse.json({ error: "Failed to fetch reminders" }, { status: 500 });
   }
 }
