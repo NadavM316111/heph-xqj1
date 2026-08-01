@@ -73,7 +73,11 @@ function urgencyLabel(days: number): string {
   return `${days} days left`;
 }
 
-function Footer({ year }: { year: number }) {
+interface FooterProps {
+  year: number;
+}
+
+function Footer({ year }: FooterProps) {
   return (
     <footer style={styles.footer}>
       <div style={styles.footerInner}>
@@ -128,7 +132,7 @@ export default function Home() {
   useEffect(() => {
     fetch("/api/auth")
       .then((r) => r.json())
-      .then((data) => {
+      .then((data: { email?: string }) => {
         if (data.email) setUser({ email: data.email });
       })
       .catch(() => {})
@@ -259,42 +263,50 @@ export default function Home() {
         <div style={styles.authCard}>
           <img src={LOGO_URL} alt="EduTracker" style={styles.authLogo} />
           <h1 style={styles.authTitle}>EduTracker</h1>
-          <p style={styles.authSubtitle}>
-            Never miss a college application deadline
-          </p>
+          <p style={styles.authSubtitle}>Never miss a college application deadline</p>
           <div style={styles.authToggleRow}>
             <button
               style={authMode === "login" ? styles.toggleActive : styles.toggleInactive}
-              onClick={() => { setAuthMode("login"); setAuthError(""); }}
+              onClick={() => {
+                setAuthMode("login");
+                setAuthError("");
+              }}
             >
               Log In
             </button>
             <button
               style={authMode === "signup" ? styles.toggleActive : styles.toggleInactive}
-              onClick={() => { setAuthMode("signup"); setAuthError(""); }}
+              onClick={() => {
+                setAuthMode("signup");
+                setAuthError("");
+              }}
             >
               Sign Up
             </button>
           </div>
           <form onSubmit={handleAuth} style={styles.authForm}>
-            <label style={styles.label}>Email</label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-              placeholder="you@email.com"
-              style={styles.input}
-            />
-            <label style={styles.label}>Password</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              placeholder="••••••••"
-              style={styles.input}
-            />
+            <div>
+              <label style={styles.label}>Email</label>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+                placeholder="you@email.com"
+                style={styles.input}
+              />
+            </div>
+            <div>
+              <label style={styles.label}>Password</label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                placeholder="••••••••"
+                style={styles.input}
+              />
+            </div>
             {authError && <p style={styles.errorText}>{authError}</p>}
             <button type="submit" disabled={authLoading} style={styles.primaryBtn}>
               {authLoading
@@ -324,7 +336,6 @@ export default function Home() {
 
   return (
     <div style={styles.appWrapper}>
-      {/* Header */}
       <header style={styles.header}>
         <div style={styles.headerInner}>
           <div style={styles.headerBrand}>
@@ -340,24 +351,24 @@ export default function Home() {
         </div>
       </header>
 
-      {/* Main */}
       <main style={styles.main}>
         <div style={styles.container}>
-          {/* Hero */}
           <div style={styles.hero}>
             <h2 style={styles.heroTitle}>Your College Applications</h2>
             <p style={styles.heroSubtitle}>
               Track deadlines and get email reminders 7 days before each one.
             </p>
             <button
-              onClick={() => { setShowAddForm(!showAddForm); setAddError(""); }}
+              onClick={() => {
+                setShowAddForm(!showAddForm);
+                setAddError("");
+              }}
               style={styles.primaryBtn}
             >
               {showAddForm ? "Cancel" : "+ Add Application"}
             </button>
           </div>
 
-          {/* Add Form */}
           {showAddForm && (
             <div style={styles.card}>
               <h3 style={styles.cardTitle}>Add a New Application</h3>
@@ -379,7 +390,10 @@ export default function Home() {
                         <li
                           key={s}
                           style={styles.suggestionItem}
-                          onClick={() => { setNewSchool(s); setSchoolSuggestions([]); }}
+                          onMouseDown={() => {
+                            setNewSchool(s);
+                            setSchoolSuggestions([]);
+                          }}
                         >
                           {s}
                         </li>
@@ -415,7 +429,6 @@ export default function Home() {
             </div>
           )}
 
-          {/* Applications List */}
           {appsLoading ? (
             <p style={styles.emptyText}>Loading your applications…</p>
           ) : sorted.length === 0 ? (
@@ -443,7 +456,7 @@ export default function Home() {
                     }}
                   >
                     <div style={styles.appCardTop}>
-                      <div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
                         <h3 style={styles.schoolName}>{app.school_name}</h3>
                         <p style={styles.deadlineText}>
                           Deadline:{" "}
@@ -455,9 +468,7 @@ export default function Home() {
                             })}
                           </strong>
                         </p>
-                        {app.notes && (
-                          <p style={styles.notesText}>{app.notes}</p>
-                        )}
+                        {app.notes && <p style={styles.notesText}>{app.notes}</p>}
                       </div>
                       <div style={styles.appCardRight}>
                         <span style={{ ...styles.urgencyBadge, background: color }}>
@@ -479,7 +490,6 @@ export default function Home() {
             </div>
           )}
 
-          {/* Reminder note */}
           {applications.length > 0 && (
             <div style={styles.reminderNote}>
               <span style={styles.reminderIcon}>📧</span>
@@ -492,7 +502,6 @@ export default function Home() {
         </div>
       </main>
 
-      {/* Footer */}
       <Footer year={currentYear} />
     </div>
   );
@@ -512,8 +521,6 @@ const styles: Record<string, React.CSSProperties> = {
     height: 80,
     objectFit: "contain",
   },
-
-  /* Auth */
   authPage: {
     minHeight: "100vh",
     display: "flex",
@@ -522,7 +529,6 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: "center",
     background: "linear-gradient(135deg, #1d4ed8 0%, #3b82f6 100%)",
     padding: "24px 16px",
-    gap: 0,
   },
   authCard: {
     background: "#ffffff",
@@ -601,16 +607,12 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: "pointer",
     textDecoration: "underline",
   },
-
-  /* App layout */
   appWrapper: {
     minHeight: "100vh",
     display: "flex",
     flexDirection: "column",
     background: "#f0f4ff",
   },
-
-  /* Header */
   header: {
     background: "#1d4ed8",
     boxShadow: "0 2px 12px rgba(29,78,216,0.3)",
@@ -666,8 +668,6 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 600,
     cursor: "pointer",
   },
-
-  /* Main */
   main: {
     flex: 1,
     padding: "32px 16px 48px",
@@ -679,8 +679,6 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: "column",
     gap: 24,
   },
-
-  /* Hero */
   hero: {
     background: "linear-gradient(135deg, #1d4ed8 0%, #3b82f6 100%)",
     borderRadius: 20,
@@ -700,8 +698,6 @@ const styles: Record<string, React.CSSProperties> = {
     color: "rgba(255,255,255,0.85)",
     lineHeight: 1.5,
   },
-
-  /* Card */
   card: {
     background: "#ffffff",
     borderRadius: 16,
@@ -719,8 +715,6 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: "column",
     gap: 16,
   },
-
-  /* Inputs */
   label: {
     display: "block",
     fontSize: 13,
@@ -737,11 +731,8 @@ const styles: Record<string, React.CSSProperties> = {
     color: "#1e293b",
     background: "#f8fafc",
     outline: "none",
-    transition: "border-color 0.2s",
     fontFamily: "inherit",
   },
-
-  /* Autocomplete */
   suggestions: {
     position: "absolute",
     top: "100%",
@@ -764,8 +755,6 @@ const styles: Record<string, React.CSSProperties> = {
     color: "#1e293b",
     cursor: "pointer",
   },
-
-  /* Buttons */
   primaryBtn: {
     background: "#1d4ed8",
     color: "#fff",
@@ -777,6 +766,7 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: "pointer",
     alignSelf: "flex-start",
     boxShadow: "0 4px 14px rgba(29,78,216,0.35)",
+    fontFamily: "inherit",
   },
   deleteBtn: {
     background: "#fee2e2",
@@ -793,8 +783,6 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: "center",
     flexShrink: 0,
   },
-
-  /* Apps list */
   appsList: {
     display: "flex",
     flexDirection: "column",
@@ -805,7 +793,6 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 14,
     padding: "20px 20px",
     boxShadow: "0 2px 12px rgba(0,0,0,0.06)",
-    transition: "box-shadow 0.2s",
   },
   appCardTop: {
     display: "flex",
@@ -845,8 +832,6 @@ const styles: Record<string, React.CSSProperties> = {
     color: "#fff",
     whiteSpace: "nowrap",
   },
-
-  /* Empty state */
   emptyState: {
     background: "#ffffff",
     borderRadius: 16,
@@ -869,8 +854,6 @@ const styles: Record<string, React.CSSProperties> = {
     color: "#94a3b8",
     textAlign: "center",
   },
-
-  /* Reminder note */
   reminderNote: {
     background: "#eff6ff",
     border: "1px solid #bfdbfe",
@@ -886,15 +869,11 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 20,
     flexShrink: 0,
   },
-
-  /* Error */
   errorText: {
     color: "#dc2626",
     fontSize: 13,
     fontWeight: 500,
   },
-
-  /* Footer */
   footer: {
     background: "#1e3a8a",
     borderTop: "1px solid rgba(255,255,255,0.08)",
