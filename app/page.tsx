@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 
 interface User {
   email: string;
@@ -15,9 +15,11 @@ interface Application {
   created_at: string;
 }
 
-interface EditState {
+interface Alert {
   id: number;
-  notes: string;
+  note: string;
+  created_at: string;
+  owner_email: string;
 }
 
 const LOGO_URL =
@@ -117,9 +119,32 @@ export default function Home() {
   const [addError, setAddError] = useState("");
   const [schoolSuggestions, setSchoolSuggestions] = useState<string[]>([]);
 
+  const [activeTab, setActiveTab] = useState<"applications" | "alerts">("applications");
+
+  const [alerts, setAlerts] = useState<Alert[]>([]);
+  const [alertsLoading, setAlertsLoading] = useState(false);
+  const [newNote, setNewNote] = useState("");
+  const [noteLoading, setNoteLoading] = useState(false);
+  const [noteError, setNoteError] = useState("");
+  const [deleteAlertId, setDeleteAlertId] = useState<number | null>(null);
+  const noteRef = useRef<HTMLTextAreaElement>(null);
+
   const [deleteId, setDeleteId] = useState<number | null>(null);
-  const [editState, setEditState] = useState<EditState | null>(null);
-  const [editLoading, setEditLoading] = useState(false);
+
+  const fetchAlerts = useCallback(async () => {
+    setAlertsLoading(true);
+    try {
+      const res = await fetch("/api/alerts");
+      if (res.ok) {
+        const data = await res.json();
+        setAlerts(data.alerts || []);
+      }
+    } catch {
+      // ignore
+    } finally {
+      setAlertsLoading(false);
+    }
+  }, []);
 
   const fetchApplications = useCallback(async () => {
     setAppsLoading(true);
@@ -147,8 +172,11 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (user) fetchApplications();
-  }, [user, fetchApplications]);
+    if (user) {
+      fetchApplications();
+      fetchAlerts();
+    }
+  }, [user, fetchApplications, fetchAlerts]);
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -172,6 +200,51 @@ export default function Home() {
       setAuthError("Network error. Please try again.");
     } finally {
       setAuthLoading(false);
+    }
+  };
+
+  const handleSaveNote = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newNote.trim()) {
+      setNoteError("Please write a note before saving.");
+      return;
+    }
+    setNoteLoading(true);
+    setNoteError("");
+    try {
+      const res = await fetch("/api/alerts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ note: newNote }),
+      });
+      if (res.ok) {
+        setNewNote("");
+        await fetchAlerts();
+        if (noteRef.current) noteRef.current.focus();
+      } else {
+        const d = await res.json();
+        setNoteError(d.error || "Failed to save note.");
+      }
+    } catch {
+      setNoteError("Network error.");
+    } finally {
+      setNoteLoading(false);
+    }
+  };
+
+  const handleDeleteAlert = async (id: number) => {
+    setDeleteAlertId(id);
+    try {
+      await fetch("/api/alerts", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id }),
+      });
+      await fetchAlerts();
+    } catch {
+      // ignore
+    } finally {
+      setDeleteAlertId(null);
     }
   };
 
@@ -230,24 +303,6 @@ export default function Home() {
       setAddError("Network error.");
     } finally {
       setAddLoading(false);
-    }
-  };
-
-  const handleEditSave = async () => {
-    if (!editState) return;
-    setEditLoading(true);
-    try {
-      await fetch("/api/applications", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: editState.id, notes: editState.notes }),
-      });
-      await fetchApplications();
-      setEditState(null);
-    } catch {
-      // ignore
-    } finally {
-      setEditLoading(false);
     }
   };
 
@@ -378,6 +433,22 @@ export default function Home() {
 
       <main style={styles.main}>
         <div style={styles.container}>
+          <div style={styles.tabRow}>
+            <button
+              style={activeTab === "applications" ? styles.tabActive : styles.tabInactive}
+              onClick={() => setActiveTab("applications")}
+            >
+              🎓 Applications
+            </button>
+            <button
+              style={activeTab === "alerts" ? styles.tabActive : styles.tabInactive}
+              onClick={() => setActiveTab("alerts")}
+            >
+              🔔 Reminder Notes
+            </button>
+          </div>
+
+          {activeTab === "applications" && (
           <div style={styles.hero}>
             <h2 style={styles.heroTitle}>Your College Applications</h2>
             <p style={styles.heroSubtitle}>
@@ -393,8 +464,9 @@ export default function Home() {
               {showAddForm ? "Cancel" : "+ Add Application"}
             </button>
           </div>
+          )}
 
-          {showAddForm && (
+          {activeTab === "applications" && showAddForm && (
             <div style={styles.card}>
               <h3 style={styles.cardTitle}>Add a New Application</h3>
               <form onSubmit={handleAddApplication} style={styles.addForm}>
@@ -454,9 +526,78 @@ export default function Home() {
             </div>
           )}
 
-          {appsLoading ? (
+          {activeTab === "alerts" && (
+            <div style={styles.alertsSection}>
+              <div style={styles.alertsHero}>
+                <h2 style={styles.heroTitle}>Reminder Notes</h2>
+                <p style={styles.heroSubtitle}>
+                  Jot down anything you want to remember — interview tips, essay ideas, contacts, or personal deadlines.
+                </p>
+              </div>
+              <div style={styles.card}>
+                <h3 style={styles.cardTitle}>Add a Reminder Note</h3>
+                <form onSubmit={handleSaveNote} style={styles.addForm}>
+                  <div>
+                    <label style={styles.label}>Your note</label>
+                    <textarea
+                      ref={noteRef}
+                      value={newNote}
+                      onChange={(e) => setNewNote(e.target.value)}
+                      placeholder="e.g. Ask Ms. Johnson for a recommendation by Oct 1st…"
+                      rows={4}
+                      style={{ ...styles.input, resize: "vertical" }}
+                    />
+                  </div>
+                  {noteError && <p style={styles.errorText}>{noteError}</p>}
+                  <button type="submit" disabled={noteLoading} style={styles.primaryBtn}>
+                    {noteLoading ? "Saving…" : "Save Note"}
+                  </button>
+                </form>
+              </div>
+
+              {alertsLoading ? (
+                <p style={styles.emptyText}>Loading notes…</p>
+              ) : alerts.length === 0 ? (
+                <div style={styles.emptyState}>
+                  <p style={styles.emptyIcon}>📝</p>
+                  <p style={styles.emptyTitle}>No notes yet</p>
+                  <p style={styles.emptyText}>Save your first reminder note above.</p>
+                </div>
+              ) : (
+                <div style={styles.appsList}>
+                  {alerts.map((alert) => (
+                    <div key={alert.id} style={styles.alertCard}>
+                      <div style={styles.alertCardInner}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <p style={styles.alertNote}>{alert.note}</p>
+                          <p style={styles.alertDate}>
+                            Saved{" "}
+                            {new Date(alert.created_at).toLocaleDateString("en-US", {
+                              year: "numeric",
+                              month: "short",
+                              day: "numeric",
+                            })}
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => handleDeleteAlert(alert.id)}
+                          disabled={deleteAlertId === alert.id}
+                          style={styles.deleteBtn}
+                          title="Delete note"
+                        >
+                          {deleteAlertId === alert.id ? "…" : "✕"}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeTab === "applications" && appsLoading ? (
             <p style={styles.emptyText}>Loading your applications…</p>
-          ) : sorted.length === 0 ? (
+          ) : activeTab === "applications" && sorted.length === 0 ? (
             <div style={styles.emptyState}>
               <p style={styles.emptyIcon}>🎓</p>
               <p style={styles.emptyTitle}>No applications yet</p>
@@ -464,7 +605,7 @@ export default function Home() {
                 Add your first college application to start tracking deadlines.
               </p>
             </div>
-          ) : (
+          ) : activeTab === "applications" ? (
             <div style={styles.appsList}>
               {sorted.map((app) => {
                 const days = daysUntil(app.deadline);
@@ -493,37 +634,7 @@ export default function Home() {
                             })}
                           </strong>
                         </p>
-                        {editState?.id === app.id ? (
-                          <div style={{ marginTop: 6, display: "flex", gap: 8, flexWrap: "wrap" as const }}>
-                            <input
-                              style={{ ...styles.input, fontSize: 13, padding: "6px 10px", flex: 1 }}
-                              value={editState.notes}
-                              onChange={(e) => setEditState({ id: app.id, notes: e.target.value })}
-                              placeholder="Add notes…"
-                            />
-                            <button
-                              style={{ ...styles.primaryBtn, padding: "6px 14px", fontSize: 13 }}
-                              onClick={handleEditSave}
-                              disabled={editLoading}
-                            >
-                              {editLoading ? "…" : "Save"}
-                            </button>
-                            <button
-                              style={{ ...styles.logoutBtn, padding: "6px 14px", fontSize: 13, background: "#f1f5f9", color: "#64748b", border: "1px solid #e2e8f0" }}
-                              onClick={() => setEditState(null)}
-                            >
-                              Cancel
-                            </button>
-                          </div>
-                        ) : (
-                          <p
-                            style={{ ...styles.notesText, cursor: "pointer" }}
-                            onClick={() => setEditState({ id: app.id, notes: app.notes || "" })}
-                            title="Click to edit notes"
-                          >
-                            {app.notes ? app.notes : <span style={{ color: "#cbd5e1" }}>+ add notes</span>}
-                          </p>
-                        )}
+                        {app.notes && <p style={styles.notesText}>{app.notes}</p>}
                       </div>
                       <div style={styles.appCardRight}>
                         <span style={{ ...styles.urgencyBadge, background: color }}>
@@ -545,7 +656,9 @@ export default function Home() {
             </div>
           )}
 
-          {applications.length > 0 && (
+          ) : null}
+
+          {activeTab === "applications" && applications.length > 0 && (
             <div style={styles.reminderNote}>
               <span style={styles.reminderIcon}>📧</span>
               <span>
@@ -908,6 +1021,76 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 14,
     color: "#94a3b8",
     textAlign: "center",
+  },
+  tabRow: {
+    display: "flex",
+    gap: 8,
+    background: "#ffffff",
+    borderRadius: 14,
+    padding: 6,
+    boxShadow: "0 2px 12px rgba(0,0,0,0.06)",
+  },
+  tabActive: {
+    flex: 1,
+    padding: "11px 0",
+    borderRadius: 10,
+    border: "none",
+    background: "#1d4ed8",
+    color: "#fff",
+    fontWeight: 700,
+    fontSize: 14,
+    cursor: "pointer",
+    fontFamily: "inherit",
+  },
+  tabInactive: {
+    flex: 1,
+    padding: "11px 0",
+    borderRadius: 10,
+    border: "none",
+    background: "transparent",
+    color: "#64748b",
+    fontWeight: 600,
+    fontSize: 14,
+    cursor: "pointer",
+    fontFamily: "inherit",
+  },
+  alertsSection: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 24,
+  },
+  alertsHero: {
+    background: "linear-gradient(135deg, #1d4ed8 0%, #3b82f6 100%)",
+    borderRadius: 20,
+    padding: "36px 32px",
+    color: "#fff",
+    display: "flex",
+    flexDirection: "column",
+    gap: 12,
+  },
+  alertCard: {
+    background: "#ffffff",
+    borderRadius: 14,
+    padding: "18px 20px",
+    boxShadow: "0 2px 12px rgba(0,0,0,0.06)",
+    borderLeft: "4px solid #1d4ed8",
+  },
+  alertCardInner: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: 12,
+  },
+  alertNote: {
+    fontSize: 15,
+    color: "#1e293b",
+    lineHeight: 1.6,
+    marginBottom: 6,
+    whiteSpace: "pre-wrap",
+  },
+  alertDate: {
+    fontSize: 12,
+    color: "#94a3b8",
+    fontStyle: "italic",
   },
   reminderNote: {
     background: "#eff6ff",
