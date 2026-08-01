@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { q, P, ensureTable, hasDb } from "@/lib/db";
 import { getSessionEmail } from "@/lib/session";
 
-let tableReady = false;
+let tableReady = false; // guard so ensureTable runs once per process
 
 async function initTable() {
   if (tableReady) return;
