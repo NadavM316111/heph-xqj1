@@ -9,17 +9,27 @@ export function hasDb(): boolean {
   return !!client;
 }
 
-export async function q(text: string, params: any[] = []): Promise<any[]> {
-  if (!client) return [];
-  const parts = text.split(/\$\d+/);
-  const strings: any = [...parts];
-  strings.raw = [...parts];
-  return (await (client as any)(strings, ...params)) as any[];
+/**
+ * Run a query. Returns the rows as an array. Most Postgres clients return
+ * { rows: [...] }, so the array also carries a .rows pointing at itself —
+ * both styles work and both typecheck.
+ */
+export async function q(text: string, params: any[] = []): Promise<any[] & { rows: any[] }> {
+  let out: any = [];
+  if (client) {
+    const parts = text.split(/\$\d+/);
+    const strings: any = [...parts];
+    strings.raw = [...parts];
+    out = (await (client as any)(strings, ...params)) as any[];
+  }
+  if (!Array.isArray(out)) out = [];
+  try { Object.defineProperty(out, "rows", { value: out, enumerable: false, configurable: true }); } catch {}
+  return out;
 }
 
 let ready = false;
 
-/** The tables every app has. Takes no arguments. */
+/** The tables every app has. Takes NO arguments. */
 export async function ensure(): Promise<void> {
   if (!client || ready) return;
   await q("CREATE TABLE IF NOT EXISTS " + P + "_users (id SERIAL PRIMARY KEY, email TEXT UNIQUE NOT NULL, pass TEXT NOT NULL, paid BOOLEAN DEFAULT false, created_at TIMESTAMPTZ DEFAULT now())");
@@ -32,15 +42,8 @@ const made = new Set<string>();
 
 /**
  * Create one of YOUR tables. Pass a full CREATE TABLE IF NOT EXISTS statement.
- * Safe to call at the top of every request: it only touches the database once
+ * Safe to call at the top of every request: it touches the database only once
  * per statement per server instance.
- *
- *   await ensureTable(\`CREATE TABLE IF NOT EXISTS \${P}_alerts (
- *     id SERIAL PRIMARY KEY,
- *     owner_email TEXT NOT NULL,
- *     body TEXT,
- *     created_at TIMESTAMPTZ DEFAULT now()
- *   )\`);
  */
 export async function ensureTable(createSql: string): Promise<void> {
   if (!client) return;

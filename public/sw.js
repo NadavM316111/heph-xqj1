@@ -1,12 +1,9 @@
 // Deliberately minimal. A clever service worker that caches HTML can brick
 // an app until users clear their storage, and nobody here can debug that.
-// Network first for pages, cache only as an offline fallback.
 
 const CACHE = "app-v1";
 
-self.addEventListener("install", () => {
-  self.skipWaiting();
-});
+self.addEventListener("install", () => { self.skipWaiting(); });
 
 self.addEventListener("activate", (e) => {
   e.waitUntil(

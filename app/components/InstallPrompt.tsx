@@ -2,11 +2,6 @@
 
 import { useEffect, useState } from "react";
 
-/**
- * Android and desktop Chrome fire beforeinstallprompt, so those get one tap.
- * iOS Safari fires nothing and hides Add to Home Screen three levels deep,
- * so those get told exactly where to look.
- */
 export default function InstallPrompt() {
   const [deferred, setDeferred] = useState<any>(null);
   const [showIos, setShowIos] = useState(false);
@@ -36,10 +31,7 @@ export default function InstallPrompt() {
     const ua = window.navigator.userAgent;
     const isIos = /iPad|iPhone|iPod/.test(ua) && !(window as any).MSStream;
     const isSafari = /Safari/.test(ua) && !/CriOS|FxiOS|EdgiOS/.test(ua);
-    if (isIos && isSafari) {
-      setShowIos(true);
-      setHidden(false);
-    }
+    if (isIos && isSafari) { setShowIos(true); setHidden(false); }
 
     return () => window.removeEventListener("beforeinstallprompt", onPrompt);
   }, []);

@@ -7,10 +7,6 @@ export const maxDuration = 60;
 const MAX_BYTES = 8 * 1024 * 1024;
 const ALLOWED = ["image/jpeg", "image/png", "image/webp", "image/gif", "application/pdf"];
 
-/**
- * POST a multipart form with a "file" field. Returns { url }.
- * Put that url straight into an <img src> or save it on a row.
- */
 export async function POST(req: NextRequest) {
   const token = process.env.BLOB_READ_WRITE_TOKEN;
   if (!token) return NextResponse.json({ error: "Uploads are not configured on this deployment." }, { status: 500 });
