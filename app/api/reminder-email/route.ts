@@ -1,16 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { q, ensure, hasDb } from "@/lib/db";
+import { q, ensureTable, hasDb, P } from "@/lib/db";
 import { getSessionEmail } from "@/lib/session";
 
 async function setupTable() {
-  await ensure(`
-    CREATE TABLE IF NOT EXISTS __APP_reminder_prefs (
-      id SERIAL PRIMARY KEY,
-      user_email TEXT UNIQUE NOT NULL,
-      reminder_email TEXT NOT NULL,
-      updated_at TIMESTAMPTZ DEFAULT NOW()
-    )
-  `);
+  await ensureTable(
+    "CREATE TABLE IF NOT EXISTS " + P + "_reminder_prefs (id SERIAL PRIMARY KEY, user_email TEXT UNIQUE NOT NULL, reminder_email TEXT NOT NULL, updated_at TIMESTAMPTZ DEFAULT NOW())"
+  );
 }
 
 export async function GET(req: NextRequest) {
@@ -21,7 +16,7 @@ export async function GET(req: NextRequest) {
   await setupTable();
 
   const rows = await q(
-    `SELECT reminder_email FROM __APP_reminder_prefs WHERE user_email = $1`,
+    `SELECT reminder_email FROM ` + P + `_reminder_prefs WHERE user_email = $1`,
     [sessionEmail]
   );
 
@@ -41,9 +36,7 @@ export async function POST(req: NextRequest) {
   if (!email) return NextResponse.json({ error: "Missing email" }, { status: 400 });
 
   await q(
-    `INSERT INTO __APP_reminder_prefs (user_email, reminder_email)
-     VALUES ($1, $2)
-     ON CONFLICT (user_email) DO UPDATE SET reminder_email = $2, updated_at = NOW()`,
+    `INSERT INTO ` + P + `_reminder_prefs (user_email, reminder_email) VALUES ($1, $2) ON CONFLICT (user_email) DO UPDATE SET reminder_email = $2, updated_at = NOW()`,
     [sessionEmail, email]
   );
 
