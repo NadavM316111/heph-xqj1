@@ -15,6 +15,11 @@ interface Application {
   created_at: string;
 }
 
+interface EditState {
+  id: number;
+  notes: string;
+}
+
 const LOGO_URL =
   "https://kobwhnsy46wia1ga.public.blob.vercel-storage.com/olympus/MHzFM0XwMRAKcI38/ms9ar2f7-ee744c62-792d-4a40-9a12-3f39cebb7464-removebg-preview-3C58eOMxvVC76P595ELS8vavDN1zzQ.png";
 
@@ -113,6 +118,8 @@ export default function Home() {
   const [schoolSuggestions, setSchoolSuggestions] = useState<string[]>([]);
 
   const [deleteId, setDeleteId] = useState<number | null>(null);
+  const [editState, setEditState] = useState<EditState | null>(null);
+  const [editLoading, setEditLoading] = useState(false);
 
   const fetchApplications = useCallback(async () => {
     setAppsLoading(true);
@@ -223,6 +230,24 @@ export default function Home() {
       setAddError("Network error.");
     } finally {
       setAddLoading(false);
+    }
+  };
+
+  const handleEditSave = async () => {
+    if (!editState) return;
+    setEditLoading(true);
+    try {
+      await fetch("/api/applications", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: editState.id, notes: editState.notes }),
+      });
+      await fetchApplications();
+      setEditState(null);
+    } catch {
+      // ignore
+    } finally {
+      setEditLoading(false);
     }
   };
 
@@ -468,7 +493,37 @@ export default function Home() {
                             })}
                           </strong>
                         </p>
-                        {app.notes && <p style={styles.notesText}>{app.notes}</p>}
+                        {editState?.id === app.id ? (
+                          <div style={{ marginTop: 6, display: "flex", gap: 8, flexWrap: "wrap" as const }}>
+                            <input
+                              style={{ ...styles.input, fontSize: 13, padding: "6px 10px", flex: 1 }}
+                              value={editState.notes}
+                              onChange={(e) => setEditState({ id: app.id, notes: e.target.value })}
+                              placeholder="Add notes…"
+                            />
+                            <button
+                              style={{ ...styles.primaryBtn, padding: "6px 14px", fontSize: 13 }}
+                              onClick={handleEditSave}
+                              disabled={editLoading}
+                            >
+                              {editLoading ? "…" : "Save"}
+                            </button>
+                            <button
+                              style={{ ...styles.logoutBtn, padding: "6px 14px", fontSize: 13, background: "#f1f5f9", color: "#64748b", border: "1px solid #e2e8f0" }}
+                              onClick={() => setEditState(null)}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <p
+                            style={{ ...styles.notesText, cursor: "pointer" }}
+                            onClick={() => setEditState({ id: app.id, notes: app.notes || "" })}
+                            title="Click to edit notes"
+                          >
+                            {app.notes ? app.notes : <span style={{ color: "#cbd5e1" }}>+ add notes</span>}
+                          </p>
+                        )}
                       </div>
                       <div style={styles.appCardRight}>
                         <span style={{ ...styles.urgencyBadge, background: color }}>
@@ -900,7 +955,7 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 6,
   },
   footerBrand: {
-    fontSize: 20,
+    fontSize: 16,
     fontWeight: 800,
     color: "#ffffff",
     letterSpacing: "-0.3px",
