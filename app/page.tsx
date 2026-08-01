@@ -73,6 +73,21 @@ function urgencyLabel(days: number): string {
   return `${days} days left`;
 }
 
+function Footer({ year }: { year: number }) {
+  return (
+    <footer style={styles.footer}>
+      <div style={styles.footerInner}>
+        <img src={LOGO_URL} alt="EduTracker" style={styles.footerLogo} />
+        <div style={styles.footerText}>
+          <span style={styles.footerBrand}>EduTracker</span>
+          <span style={styles.footerYear}>&copy; {year}</span>
+        </div>
+        <p style={styles.footerTagline}>Never miss a college application deadline.</p>
+      </div>
+    </footer>
+  );
+}
+
 export default function Home() {
   const [user, setUser] = useState<User | null>(null);
   const [authMode, setAuthMode] = useState<"login" | "signup">("login");
@@ -293,15 +308,16 @@ export default function Home() {
             {authMode === "login" ? "New here? " : "Already have an account? "}
             <span
               style={styles.linkText}
-              onClick={() => { setAuthMode(authMode === "login" ? "signup" : "login"); setAuthError(""); }}
+              onClick={() => {
+                setAuthMode(authMode === "login" ? "signup" : "login");
+                setAuthError("");
+              }}
             >
               {authMode === "login" ? "Sign up" : "Log in"}
             </span>
           </p>
         </div>
-        <footer style={styles.footer}>
-          EduTracker &copy; {currentYear}
-        </footer>
+        <Footer year={currentYear} />
       </div>
     );
   }
@@ -477,9 +493,7 @@ export default function Home() {
       </main>
 
       {/* Footer */}
-      <footer style={styles.footer}>
-        EduTracker &copy; {currentYear}
-      </footer>
+      <Footer year={currentYear} />
     </div>
   );
 }
@@ -508,6 +522,7 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: "center",
     background: "linear-gradient(135deg, #1d4ed8 0%, #3b82f6 100%)",
     padding: "24px 16px",
+    gap: 0,
   },
   authCard: {
     background: "#ffffff",
@@ -881,12 +896,44 @@ const styles: Record<string, React.CSSProperties> = {
 
   /* Footer */
   footer: {
-    background: "#1d4ed8",
-    color: "rgba(255,255,255,0.9)",
+    background: "#1e3a8a",
+    borderTop: "1px solid rgba(255,255,255,0.08)",
+    padding: "28px 16px",
+    marginTop: "auto",
+  },
+  footerInner: {
+    maxWidth: 760,
+    margin: "0 auto",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: 8,
+  },
+  footerLogo: {
+    width: 36,
+    height: 36,
+    objectFit: "contain",
+    marginBottom: 2,
+  },
+  footerText: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+  },
+  footerBrand: {
+    fontSize: 16,
+    fontWeight: 800,
+    color: "#ffffff",
+    letterSpacing: "-0.3px",
+  },
+  footerYear: {
+    fontSize: 15,
+    color: "rgba(255,255,255,0.7)",
+    fontWeight: 500,
+  },
+  footerTagline: {
+    fontSize: 13,
+    color: "rgba(255,255,255,0.5)",
     textAlign: "center",
-    padding: "18px 16px",
-    fontSize: 14,
-    fontWeight: 600,
-    letterSpacing: "0.3px",
   },
 };
