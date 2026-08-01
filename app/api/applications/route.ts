@@ -2,10 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { q, P, ensureTable, hasDb } from "@/lib/db";
 import { getSessionEmail } from "@/lib/session";
 
-let tableReady = false; // guard so ensureTable runs once per process
-
 async function initTable() {
-  if (tableReady) return;
   await ensureTable(
     "CREATE TABLE IF NOT EXISTS " +
       P +
@@ -18,7 +15,6 @@ async function initTable() {
       "created_at TIMESTAMPTZ DEFAULT NOW()" +
       ")"
   );
-  tableReady = true;
 }
 
 export async function GET(req: NextRequest) {
