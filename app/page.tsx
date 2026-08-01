@@ -900,7 +900,7 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 6,
   },
   footerBrand: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: 800,
     color: "#ffffff",
     letterSpacing: "-0.3px",
