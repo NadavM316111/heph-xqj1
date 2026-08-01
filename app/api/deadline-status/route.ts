@@ -1,17 +1,29 @@
 import { NextRequest, NextResponse } from "next/server";
-import { q, ensure, hasDb } from "@/lib/db";
+import { q, ensureTable, P, hasDb } from "@/lib/db";
 
-const PREFIX = process.env.APP_TABLE_PREFIX ?? "app";
+const ensureDeadlineStatus = () =>
+  ensureTable(
+    "CREATE TABLE IF NOT EXISTS " + P + "_deadline_status (" +
+    "id SERIAL PRIMARY KEY," +
+    "user_email TEXT NOT NULL," +
+    "college_id INTEGER NOT NULL," +
+    "deadline_type TEXT NOT NULL," +
+    "deadline_date TEXT NOT NULL," +
+    "completed BOOLEAN NOT NULL DEFAULT false," +
+    "updated_at TIMESTAMPTZ DEFAULT now()," +
+    "UNIQUE (user_email, college_id, deadline_type, deadline_date)" +
+    ")"
+  );
 
 export async function GET(req: NextRequest) {
   const email = req.nextUrl.searchParams.get("email");
   if (!email) return NextResponse.json({ statuses: [] });
   if (!hasDb()) return NextResponse.json({ statuses: [] });
   try {
-    await ensure();
+    await ensureDeadlineStatus();
     const rows = await q(
       `SELECT college_id, deadline_type, deadline_date, completed
-       FROM ${PREFIX}_deadline_status WHERE user_email = $1`,
+       FROM ${P}_deadline_status WHERE user_email = $1`,
       [email]
     );
     return NextResponse.json({ statuses: rows });
@@ -25,9 +37,9 @@ export async function POST(req: NextRequest) {
   if (!email) return NextResponse.json({ ok: false });
   if (!hasDb()) return NextResponse.json({ ok: false });
   try {
-    await ensure();
+    await ensureDeadlineStatus();
     await q(
-      `INSERT INTO ${PREFIX}_deadline_status (user_email, college_id, deadline_type, deadline_date, completed, updated_at)
+      `INSERT INTO ${P}_deadline_status (user_email, college_id, deadline_type, deadline_date, completed, updated_at)
        VALUES ($1, $2, $3, $4, $5, NOW())
        ON CONFLICT (user_email, college_id, deadline_type, deadline_date)
        DO UPDATE SET completed = $5, updated_at = NOW()`,
