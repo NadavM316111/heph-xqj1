@@ -334,7 +334,6 @@ export default function Home() {
     );
   }
 
-
   return (
     <div style={styles.appWrapper}>
       <header style={styles.header}>
