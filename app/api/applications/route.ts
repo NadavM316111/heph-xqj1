@@ -2,8 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { q, P, ensureTable, hasDb } from "@/lib/db";
 import { getSessionEmail } from "@/lib/session";
 
-export const runtime = "nodejs";
-
 let tableReady = false;
 
 async function initTable() {
