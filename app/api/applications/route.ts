@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { q, P, ensure, hasDb } from "@/lib/db";
+import { q, P, ensureTable, hasDb } from "@/lib/db";
 import { getSessionEmail } from "@/lib/session";
 
 export const runtime = "nodejs";
@@ -8,8 +8,7 @@ let tableReady = false;
 
 async function initTable() {
   if (tableReady) return;
-  await ensure();
-  await q(
+  await ensureTable(
     "CREATE TABLE IF NOT EXISTS " +
       P +
       "_applications (" +
@@ -19,8 +18,7 @@ async function initTable() {
       "deadline DATE NOT NULL, " +
       "notes TEXT DEFAULT '', " +
       "created_at TIMESTAMPTZ DEFAULT NOW()" +
-      ")",
-    []
+      ")"
   );
   tableReady = true;
 }
